@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SBAC Practice: Add &amp; Subtract with Equivalent Fractions</title>
+<!-- tab icon: plain fraction strips (no name, no initials; tools/make-icon.js) -->
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=1">
+<link rel="icon" type="image/svg+xml" href="icons/favicon.svg?v=1">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&family=Lexend:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css?v=gv1119">
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+</head>
+<body>
+<div class="container">
+
+  <!-- shown only while no score sheet is connected (sheet.js SHEET_URL is empty) -->
+  <p id="preview-banner" class="preview-banner" hidden>Preview — nothing is saved</p>
+
+  <!-- PAGE 1: TITLE -->
+  <section id="home" class="screen">
+    <div class="home-inner">
+      <h1 class="main-title">SBAC Practice: Add &amp; Subtract with Equivalent Fractions</h1>
+      <p class="sub-title">Grade 5 · FIAB Practice</p>
+
+      <!-- the picture: 1/2 + 1/4 = 3/4 as fraction strips; the half is cut into 2 fourths to add (Marcos 11/2) -->
+      <svg class="home-pic" viewBox="0 0 430 140" role="img" aria-label="Fraction strips: one half plus one fourth equals three fourths">
+        <defs><clipPath id="hp-bar"><rect width="300" height="32" rx="9"/></clipPath></defs>
+        <g class="hp-row" transform="translate(120 6)">
+          <g clip-path="url(#hp-bar)"><rect width="300" height="32" fill="#fff"/><rect width="150" height="32" fill="#3b82f6"/></g>
+          <line x1="75" y1="5" x2="75" y2="27" stroke="#fff" stroke-width="2.5" stroke-dasharray="4 4"/>
+          <line x1="150" y1="0" x2="150" y2="32" class="hp-cut"/>
+          <rect width="300" height="32" rx="9" class="hp-edge"/>
+        </g>
+        <g class="hp-row" transform="translate(120 54)">
+          <g clip-path="url(#hp-bar)"><rect width="300" height="32" fill="#fff"/><rect width="75" height="32" fill="#f59e0b"/></g>
+          <line x1="75" y1="0" x2="75" y2="32" class="hp-cut"/><line x1="150" y1="0" x2="150" y2="32" class="hp-cut"/><line x1="225" y1="0" x2="225" y2="32" class="hp-cut"/>
+          <rect width="300" height="32" rx="9" class="hp-edge"/>
+        </g>
+        <g class="hp-row" transform="translate(120 102)">
+          <g clip-path="url(#hp-bar)"><rect width="300" height="32" fill="#fff"/><rect width="150" height="32" fill="#3b82f6"/><rect x="150" width="75" height="32" fill="#f59e0b"/></g>
+          <line x1="75" y1="0" x2="75" y2="32" class="hp-cut"/><line x1="150" y1="0" x2="150" y2="32" class="hp-cut"/><line x1="225" y1="0" x2="225" y2="32" class="hp-cut"/>
+          <rect width="300" height="32" rx="9" class="hp-edge"/>
+        </g>
+        <g class="hp-frac" transform="translate(80 22)"><text y="-5">1</text><line x1="-12" x2="12"/><text y="18">2</text></g>
+        <g class="hp-frac" transform="translate(80 70)"><text y="-5">1</text><line x1="-12" x2="12"/><text y="18">4</text></g>
+        <g class="hp-frac" transform="translate(80 118)"><text y="-5">3</text><line x1="-12" x2="12"/><text y="18">4</text></g>
+        <text class="hp-sign" x="30" y="80">+</text>
+        <text class="hp-sign" x="30" y="128">=</text>
+      </svg>
+
+      <!-- each teacher has her own link (?class=…): only her name shows, and no student picks a teacher -->
+      <p id="home-class" class="home-class" hidden></p>
+
+      <div id="home-lead" class="home-lead" data-read-box>
+        <button type="button" id="home-say" class="say-home" aria-label="Read the welcome">🔊</button>
+        <p id="home-lead-words" class="home-lead-text"></p>
+      </div>
+      <!-- opened without a class link: nothing to start, only this -->
+      <div id="home-nolink" class="home-lead home-nolink" data-read-box hidden>
+        <button type="button" id="nolink-say" class="say-home" aria-label="Read this">🔊</button>
+        <p id="home-nolink-words" class="home-lead-text"></p>
+      </div>
+
+      <div class="name-row">
+        <label class="sr-only" for="student-name">First name</label>
+        <input id="student-name" class="name-input" type="text" autocomplete="off" maxlength="20" placeholder="First name">
+        <label class="sr-only" for="student-last">Last name</label>
+        <input id="student-last" class="name-input" type="text" autocomplete="off" maxlength="20" placeholder="Last name">
+      </div>
+      <div id="name-hint" class="name-hint" data-read-box hidden>
+        <button type="button" class="say" aria-label="Read the note">🔊</button>
+        <span id="name-hint-words"></span>
+      </div>
+
+      <!-- Is this your name? (as on the Grade 5 Inferences site): Yes goes on, No goes back to the boxes -->
+      <div id="name-check" class="name-check" hidden>
+        <div id="name-check-ask" class="name-check-ask" data-read-box>
+          <button type="button" class="say" aria-label="Read the question">🔊</button>
+          <span id="name-check-words"></span>
+        </div>
+        <p id="name-check-name" class="name-check-name"></p>
+        <div class="name-check-btns">
+          <button type="button" id="name-yes" class="btn name-yes">✅ Yes, that's me</button>
+          <button type="button" id="name-no" class="btn ghost">✏️ No, fix it</button>
+        </div>
+      </div>
+      <button type="button" id="start-btn" class="btn start-btn" data-guest-start>Start ➜</button>
+
+      <div class="home-links">
+        <button type="button" id="scores-btn" class="home-link">Saved scores</button>
+        <span id="scores-dot" aria-hidden="true">·</span>
+        <a href="#" id="teacher-link" class="home-link">Teacher Access</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- PAGE 2: DIRECTIONS -->
+  <section id="directions" class="screen" hidden>
+    <div class="home-inner">
+      <div id="dir-head" class="dir-head" data-read-box>
+        <button type="button" id="dir-say" class="say-home say-dir" aria-label="Listen to the directions">🔊</button>
+        <h2 class="dir-title">Directions</h2>
+      </div>
+      <p class="dir-sub">Tap 🔊 and listen. Then press I'm ready.</p>
+      <ol id="dir-steps" class="dir-steps" role="list"></ol>
+      <p id="dir-note" class="dir-note" hidden></p>
+      <button type="button" id="dir-go" class="btn start-btn" aria-disabled="true">I'm ready ➜</button>
+      <a href="#" id="dir-back" class="change-name">← Back</a>
+    </div>
+  </section>
+
+  <!-- PAGE 3: PICK WHERE TO START -->
+  <section id="choose" class="screen" hidden>
+    <div class="home-inner">
+      <div class="choose-head">
+        <h2 id="hello" class="hello">Hi!</h2>
+        <button type="button" id="choose-say" class="say-home" aria-label="Read the directions">🔊</button>
+      </div>
+      <p id="choose-class" class="choose-class"></p>
+      <p class="choose-sub">Go in order. Each one opens when you finish the one before it.</p>
+      <p id="looking" class="looking" hidden>Looking for your saved work…</p>
+
+      <div id="resume" class="resume" hidden>
+        <p id="resume-text"></p>
+        <div class="resume-btns">
+          <button type="button" id="resume-go" class="btn small">Keep going ▶</button>
+          <button type="button" id="resume-new" class="btn small ghost">Start over (teacher PIN)</button>
+        </div>
+      </div>
+
+      <div class="set-grid">
+        <button type="button" class="set-btn set-W" data-set="W">🌱 Warm Up <span>Start here · 15 questions with friendlier numbers · 💡 reminders read to you · 2 takes</span></button>
+        <button type="button" class="set-btn set-R" data-set="R">Review <span>15 questions · a step up</span><span>2 takes</span></button>
+        <button type="button" class="set-btn set-TA" data-set="TA">Test A <span>Just like the real test</span><span>15 questions · 1 take</span></button>
+        <button type="button" class="set-btn set-TB" data-set="TB">Test B <span>Just like the real test</span><span>15 questions · 1 take</span></button>
+      </div>
+      <a href="#" id="change-name" class="change-name">Not you? Go back and type your name</a>
+    </div>
+  </section>
+
+  <!-- QUIZ -->
+  <section id="quiz" class="screen" hidden>
+    <header class="quiz-head">
+      <span id="set-banner" class="set-pill"></span>
+      <span id="q-count" class="q-count"></span>
+      <button type="button" id="exit-btn" class="exit-btn" title="Your place is saved">Exit</button>
+    </header>
+    <div class="pg-bar"><div id="progress-fill" class="pg-fill"></div></div>
+    <div id="item" class="item"></div>
+    <!-- Try it as a student: her bar to move around the set (nothing is saved) -->
+    <div id="teach-bar" class="teach-bar" hidden>
+      <span class="tb-tag">👀 Teacher preview · nothing is saved</span>
+      <span class="tb-nav">
+        <button type="button" id="tb-prev" class="tb-arrow" aria-label="Previous question">◀</button>
+        <select id="tb-jump" aria-label="Go to a question"></select>
+        <button type="button" id="tb-next" class="tb-arrow" aria-label="Next question">▶</button>
+      </span>
+      <button type="button" id="tb-back" class="btn small">← Teacher screen</button>
+    </div>
+  </section>
+
+  <!-- TEACHER: TRY IT AS A STUDENT (pick any set; nothing locked, nothing saved) -->
+  <section id="try" class="screen" hidden>
+    <div class="home-inner">
+      <h2 class="try-title">👀 Try it as a student</h2>
+      <p class="try-sub">Pick a set. Go to any question with ◀ ▶. Nothing is saved, and nothing goes to your sheet.</p>
+      <div class="try-grid">
+        <button type="button" class="try-btn set-W" data-set="W">Warm Up</button>
+        <button type="button" class="try-btn set-W" data-set="W2">Warm Up · take 2</button>
+        <button type="button" class="try-btn set-R" data-set="R">Review</button>
+        <button type="button" class="try-btn set-R" data-set="R2">Review · take 2</button>
+        <button type="button" class="try-btn set-TA" data-set="TA">Test A</button>
+        <button type="button" class="try-btn set-TB" data-set="TB">Test B</button>
+      </div>
+      <a href="#" id="try-back" class="change-name">← Teacher screen</a>
+    </div>
+  </section>
+
+  <!-- TEACHER: SLIDE MODE (worked examples only, never a question students are scored on) -->
+  <section id="slides" class="screen" hidden>
+    <header class="sl-bar">
+      <span class="sl-name">🖥️ Slide Mode</span>
+      <span id="sl-count" class="sl-count"></span>
+      <span class="tb-nav">
+        <button type="button" id="sl-prev" class="tb-arrow" aria-label="Previous slide">◀</button>
+        <select id="sl-jump" aria-label="Go to a slide"></select>
+        <button type="button" id="sl-next" class="tb-arrow" aria-label="Next slide">▶</button>
+      </span>
+      <button type="button" id="sl-back" class="btn small ghost">← Teacher screen</button>
+    </header>
+    <div id="sl-body" class="sl-body"></div>
+    <div class="sl-foot"><button type="button" id="sl-step" class="btn sl-step">Show step 1 ▶</button></div>
+  </section>
+
+  <!-- RESULTS -->
+  <section id="results" class="screen" hidden>
+    <div id="reward" class="reward" hidden>
+      <div class="reward-icon">🏆</div>
+      <h2 id="reward-msg" class="reward-msg">Excellent Mastery!</h2>
+    </div>
+    <h2 class="res-title">Set Complete</h2>
+    <div id="r-name" class="res-name"></div>
+    <div id="r-msg" class="res-msg"></div>
+    <p id="r-sent" class="sent-note" hidden></p>
+    <div class="gr-grid">
+      <div><div class="stat" id="r-pts">0/15</div><div class="stat-l">Points</div></div>
+      <div><div class="stat" id="r-pct">0%</div><div class="stat-l">Score</div></div>
+      <div><div class="stat" id="r-grade">-</div><div class="stat-l">Grade</div></div>
+    </div>
+    <h3 class="skills-title">How you did on each skill</h3>
+    <table class="skill-table"><tbody id="skill-table"></tbody></table>
+    <div id="missed"></div>
+    <button type="button" id="home-btn" class="btn">Return to Menu</button>
+  </section>
+
+  <!-- TEACHER ACCESS: pick the class, type the PIN (the score sheet checks it; no PIN is in this page) -->
+  <section id="tpin" class="screen" hidden>
+    <div class="home-inner tpin-inner">
+      <h2 class="try-title">Teacher Access</h2>
+      <p class="try-sub">Pick your class. Type your PIN.</p>
+      <div class="tpin-classes" role="radiogroup" aria-label="Class">
+        <button type="button" class="tpin-class" data-teacher="pudill" role="radio" aria-checked="false">Ms. Pudill</button>
+        <button type="button" class="tpin-class" data-teacher="krotki" role="radio" aria-checked="false">Mrs. Krotki</button>
+      </div>
+      <label class="sr-only" for="tpin-input">Teacher PIN</label>
+      <input id="tpin-input" class="name-input tpin-input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="20" placeholder="PIN">
+      <button type="button" id="tpin-go" class="btn start-btn">Open class scores</button>
+      <p id="tpin-note" class="tpin-note" role="status" hidden></p>
+      <div id="tpin-sample" class="tpin-sample" hidden>
+        <p>No score sheet is connected yet, so a PIN can't be checked here.</p>
+        <button type="button" id="tpin-sample-go" class="btn small ghost">See sample data</button>
+      </div>
+      <a href="#" id="tpin-back" class="change-name">← Back</a>
+    </div>
+  </section>
+
+  <!-- TEACHER: CLASS SCORES (one class's tab of the score sheet, any device) -->
+  <section id="teacher" class="screen" hidden>
+    <div class="key-head">
+      <h2 id="t-title">Class Scores</h2>
+      <div class="key-actions">
+        <button type="button" id="t-refresh" class="btn small ghost">Refresh</button>
+        <button type="button" id="t-home" class="btn small">Back</button>
+      </div>
+    </div>
+    <p class="key-intro">Every student's work in your class from every device, saved in the class score sheet (Google Sheets).</p>
+    <p id="t-sample" class="t-sample" hidden>Sample data · invented students, not a real class · nothing here is saved</p>
+    <div class="t-acts">
+      <button type="button" id="t-try" class="t-act">👀 Try it as a student<span>Any set, any question. Nothing is saved.</span></button>
+      <button type="button" id="t-slides" class="t-act">🖥️ Slide Mode<span>Worked examples, big, for your desk or the board. Never the questions students answer.</span></button>
+      <button type="button" id="t-key" class="t-act">✅ Answer key<span>Any set: the right answers, why the wrong ones are wrong, and how to solve. Ready to print.</span></button>
+    </div>
+    <p id="t-updated" class="t-updated" role="status" hidden></p>
+    <div id="t-body"></div>
+    <!-- a name typed wrong (11/18): outside #t-body, which is drawn again every 20 seconds, so typing here stays -->
+    <details id="t-fix" class="t-fix" hidden>
+      <summary>✏️ Fix a misspelled name</summary>
+      <p class="t-fix-note">A student who typed a name wrong shows up as a new student. Move that work to the right name. Every row of that name changes. Nothing is deleted.</p>
+      <div class="t-fix-row">
+        <label>Name to fix <select id="fix-from"></select></label>
+        <label>Right first name <input id="fix-first" type="text" maxlength="20" autocomplete="off"></label>
+        <label>Right last name <input id="fix-last" type="text" maxlength="20" autocomplete="off"></label>
+        <button type="button" id="fix-go" class="btn small">Move the work</button>
+      </div>
+      <p id="fix-msg" class="t-fix-msg" role="status"></p>
+    </details>
+  </section>
+
+  <!-- TEACHER ANSWER KEY -->
+  <section id="key" class="screen" hidden>
+    <div class="key-head">
+      <h2>Answer Key</h2>
+      <div class="key-tabs">
+        <button type="button" class="key-tab" data-set="W">Warm Up</button>
+        <button type="button" class="key-tab" data-set="W2">Warm Up · take 2</button>
+        <button type="button" class="key-tab" data-set="R">Review</button>
+        <button type="button" class="key-tab" data-set="R2">Review · take 2</button>
+        <button type="button" class="key-tab" data-set="TA">Test A</button>
+        <button type="button" class="key-tab" data-set="TB">Test B</button>
+      </div>
+      <div class="key-actions">
+        <button type="button" id="key-print" class="btn small ghost">🖨️ Print</button>
+        <button type="button" id="key-home" class="btn small">Back</button>
+      </div>
+    </div>
+    <div id="key-print-head" class="key-print-head"></div>
+    <p class="key-intro">Same 15 slots as the Grade 5 FIAB "Add and Subtract with Equivalent Fractions": 7 multiple choice, 8 type-in fractions. Type-in answers accept any equal fraction.</p>
+    <div id="key-body"></div>
+  </section>
+
+  <!-- SCORE HISTORY -->
+  <div id="score-modal" class="modal" hidden>
+    <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="scores-title">
+      <div class="modal-header">
+        <h2 id="scores-title">Score History</h2>
+        <button type="button" id="close-scores" class="close-btn" aria-label="Close">&times;</button>
+      </div>
+      <p class="modal-note">Scores are saved on this computer only.</p>
+      <div id="score-list" class="score-list"></div>
+      <button type="button" id="clear-scores" class="clear-btn">🗑️ Clear All Scores (Teacher Only)</button>
+    </div>
+  </div>
+
+</div>
+<!-- guest view (11/19): ?share=<code> — see share.js; loaded first, so this visit's storage and sends are kept apart -->
+<script src="share.js?v=9t"></script>
+<script src="data/sets.js?v=pk1"></script>
+<script src="data/slides.js?v=pk1"></script>
+<script src="sheet.js?v=pk2"></script>
+<!-- Kokoro voice: recordings first, then the player (kokoro-voice/kokoro-voice.js, the master copy), then the page that speaks -->
+<script src="kokoro/lines.js?v=pk1"></script>
+<script src="kokoro-voice.js?v=ks1116"></script>
+<script src="app.js?v=gv1119"></script>
+</body>
+</html>

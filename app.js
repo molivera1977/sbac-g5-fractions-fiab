@@ -1,0 +1,1916 @@
+/* SBAC Practice: Add & Subtract with Equivalent Fractions — Grade 5 FIAB practice, for Ms. Pudill's and
+   Mrs. Krotki's 5th-grade classes. A copy of the Grade 5 fractions FIAB practice site (Warm Up, Review, Test A,
+   Test B, 15 questions each; 2 takes of the Warm Up and the Review), split into the two classes the way the
+   Grade 5 Inferences site is:
+   - each teacher has her own link, ?class=pudill or ?class=krotki: the cover shows only her name, and a page
+     opened without one only asks for the class link;
+   - every saved key and every record is per teacher + student (who()), so the same name in the other class is
+     another student, and every record names the teacher (the score sheet keeps one tab per class);
+   - every PIN goes to the score sheet's script and is checked THERE (sheet.js); no PIN is in this page;
+   - with no score sheet connected the page is a PREVIEW (a banner says so): nothing leaves this computer, and
+     Teacher Access offers sample data.
+   Scores stay on this device (localStorage); once the score sheet is connected every answer also goes to the
+   teacher's tab of it, so her teacher screen shows the whole class on any device. */
+(function () {
+  'use strict';
+
+  const READ_RATE = 0.82;
+  const Sheet = window.G5FracSheet;
+  // this site's own keys (another site on the same web address keeps its own; nothing here may touch them)
+  const PLACES_KEY = 'g5FracFiab_places_v1'; // each student's unfinished sets on this device, by teacher + name
+  const SCORES_KEY = 'g5FracFiab_scores_v1';
+  const TEACHERS = { pudill: 'Ms. Pudill', krotki: 'Mrs. Krotki' };
+  // Each teacher has her own link, ?class=<her code> (capitals OK): only her name shows, and no student picks a
+  // teacher. A page opened without a known class link starts nothing.
+  const CLASS = (() => {
+    try {
+      const c = String(new URLSearchParams(location.search).get('class') || '').trim().toLowerCase();
+      return Object.prototype.hasOwnProperty.call(TEACHERS, c) ? c : '';
+    } catch (e) { return ''; }
+  })();
+  /* GUEST VIEW (Marcos 11/19: an admin page with every SBAC practice site "so they can see all of them in one place"):
+     share.js, the same guest view as the other SBAC practice sites, turns on for ?share=<code>. A guest is "Guest" (no
+     name typed, no class link needed), every set is open, no PIN is ever asked, and nothing is saved or sent: share.js
+     keeps this visit's storage apart and wipes it, and this page sends nothing and looks nothing up. The teacher/admin
+     guest link also opens Class Scores on the sample students, with no PIN. A student's class link is unchanged. */
+  const GUEST = Boolean(window.SHARE_MODE);
+  const GUEST_NAME = 'Guest';
+  if (GUEST) {
+    // what each guest card offers, true of THIS site (share.js draws the cards from these lists; its words say "the
+    // teacher", never another teacher's name: this site's share.js is the copy for the school's other teachers' sites)
+    window.SHARE_CARDS = {
+      student: [['🔓', 'Every set open', 'No name, no class link, nothing locked.'],
+        ['📊', 'Right answers and score', 'The right answer and how to solve it after each question.'],
+        ['🛡️', 'Nothing is saved', 'No scores go to the teacher.']],
+      teacher: [['📊', 'Class scores', 'Sample students: the heat map, each pick, the time.'],
+        ['👀', 'Try it as a student', 'Any set, any question: ◀ ▶ to move around.'],
+        ['🖥️', 'Slide Mode', 'Worked examples, one step at a time, for the board.'],
+        ['✅', 'Answer key', 'Every question, the right answer and how to solve it. Printable.']]
+    };
+  }
+  const SET_NAMES = { W: 'Warm Up', R: 'Review', TA: 'Test A', TB: 'Test B' };
+  // Takes per level and the set each take uses (Marcos 11/2: "2 takes at each of Warm Up and
+  // Review, then 1 of each Test A and Test B"). Take 2 has new numbers and new answers.
+  const TAKES = { W: ['W', 'W2'], R: ['R', 'R2'], TA: ['TA'], TB: ['TB'] };
+  const levelOf = set => Object.keys(TAKES).find(l => TAKES[l].includes(set)) || set;
+  const takeNo = set => TAKES[levelOf(set)].indexOf(set) + 1;
+  const setLabel = set => `${SET_NAMES[levelOf(set)]}${takeNo(set) > 1 ? ' · take 2' : ''}`;
+
+  const SETS = window.SETS;
+  const SKILL_NAMES = window.SKILL_NAMES;
+  const $ = sel => document.querySelector(sel);
+
+  const store = {
+    get(key, fallback) {
+      try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch (e) { return fallback; }
+    },
+    set(key, value) {
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* private window: nothing is kept */ }
+    },
+    remove(key) {
+      try { localStorage.removeItem(key); } catch (e) { /* same */ }
+    }
+  };
+
+  /* ------------------------------------------------------------ math markup */
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  function splitToken(inner) {
+    const m = inner.match(/^(?:(\d+) )?([^/ ]+)\/([^/ ]+)$/);
+    return m ? { whole: m[1] || '', num: m[2], den: m[3] } : null;
+  }
+  const opHTML = s => esc(s).replace(/×/g, '<span class="op">×</span>').replace(/\+/g, '<span class="op">+</span>');
+
+  function fracHTML(inner) {
+    const t = splitToken(inner);
+    if (!t) return esc(inner);
+    const f = `<span class="fr"><span class="fn">${opHTML(t.num)}</span><span class="fd">${opHTML(t.den)}</span></span>`;
+    return t.whole ? `<span class="mx"><span class="mw">${t.whole}</span>${f}</span>` : f;
+  }
+  function mathHTML(str) {
+    return String(str).split(/(\{[^}]+\})/).map(part =>
+      part.startsWith('{') && part.endsWith('}')
+        ? fracHTML(part.slice(1, -1))
+        : esc(part).replace(/□/g, '<span class="box-sym" aria-label="box"></span>')
+    ).join('');
+  }
+  const linesHTML = str => String(str).split('\n').map(l => `<div class="line">${mathHTML(l)}</div>`).join('');
+
+  /* ------------------------------------------------------------ speech text */
+  const ORD = ['', 'first', 'half', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth',
+    'eleventh', 'twelfth', 'thirteenth', 'fourteenth', 'fifteenth', 'sixteenth', 'seventeenth', 'eighteenth', 'nineteenth'];
+  const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+  const TENS_ORD = ['', '', 'twentieth', 'thirtieth', 'fortieth', 'fiftieth', 'sixtieth', 'seventieth', 'eightieth', 'ninetieth'];
+
+  function denName(d) {
+    if (d < 20) return ORD[d];
+    if (d === 100) return 'hundredth';
+    if (d < 100) {
+      const t = Math.floor(d / 10), o = d % 10;
+      return o ? `${TENS[t]}-${o === 2 ? 'second' : ORD[o]}` : TENS_ORD[t];
+    }
+    return null;
+  }
+  const opWords = s => s.replace(/×/g, ' times ').replace(/\+/g, ' plus ');
+
+  function fracWords(inner) {
+    const t = splitToken(inner);
+    if (!t) return inner;
+    const plain = /^\d+$/.test(t.num) && /^\d+$/.test(t.den);
+    const name = plain ? denName(Number(t.den)) : null;
+    let f;
+    if (name) f = `${t.num} ${t.num === '1' ? name : (name === 'half' ? 'halves' : name + 's')}`;
+    else f = `${opWords(t.num)}, over ${opWords(t.den)},`;
+    return t.whole ? `${t.whole} and ${f}` : f;
+  }
+  /* ------------------------------------------------------------ what is shown = what is said
+     A spoken box is built from word spans. Each span shows a word, a whole fraction or a sign,
+     and carries what the voice says for it (data-say: "3 fourths", "plus"). The box's spoken
+     text is put together from its spans in order (spokenOf), so the span at the voice's
+     charIndex is the word being said and lights up (lightAt): the same for the device's
+     voice and for the Kokoro recordings, which report each word's charIndex too. */
+  const SIGN_SAY = { '+': 'plus', '−': 'minus', '=': 'equals', '×': 'times', '□': 'box', '🔊': 'the speaker button' };
+  const wordSpan = (show, say, stop) => `<span class="w" data-say="${esc(say)}"${stop ? ' data-stop' : ''}>${show}</span>`;
+  // stop: the piece ends a sentence when read aloud (a pause), as each part, line and bubble did before
+  function sayHTML(str, stop = true) {
+    const pieces = [];   // [show, say]; say null = a space
+    String(str).split(/(\{[^}]+\})/).forEach(part => {
+      if (!part) return;
+      if (part.startsWith('{') && part.endsWith('}')) { pieces.push([fracHTML(part.slice(1, -1)), fracWords(part.slice(1, -1))]); return; }
+      part.split(/(\s+)/).forEach(chunk => {
+        if (!chunk) return;
+        if (/^\s+$/.test(chunk)) { pieces.push([chunk, null]); return; }
+        const last = pieces[pieces.length - 1];
+        if (/^[.,;:?!)]+$/.test(chunk) && last && last[1] !== null) { last[0] += esc(chunk); last[1] += chunk; return; }   // "{3/4}." stays one word
+        if (chunk === '□') pieces.push(['<span class="box-sym" aria-label="box"></span>', 'box']);
+        else pieces.push([esc(chunk), SIGN_SAY[chunk] || chunk]);
+      });
+    });
+    let lastSaid = -1;
+    pieces.forEach((pc, i) => { if (pc[1] !== null) lastSaid = i; });
+    return pieces.map((pc, i) => (pc[1] === null ? pc[0] : wordSpan(pc[0], pc[1], stop && i === lastSaid))).join('');
+  }
+  const linesSayHTML = str => String(str).split('\n').map(l => `<div class="line">${sayHTML(l)}</div>`).join('');
+
+  // The words a box says, in order, and where each span's words start in that text
+  function spokenOf(box) {
+    let text = '';
+    const marks = [];
+    box.querySelectorAll('.w').forEach(w => {
+      const say = (w.dataset.say || '').trim();
+      if (!say) return;
+      if (text) text += ' ';
+      marks.push([text.length, w]);
+      text += say;
+      if (w.hasAttribute('data-stop') && !/[.?!:]$/.test(text)) text = `${text.replace(/,$/, '')}.`;
+    });
+    return { text, marks };
+  }
+
+  // Light the span being said: the last one starting at or before the voice's charIndex
+  let litWord = null;
+  function lightAt(marks, at) {
+    let hit = null;
+    for (const [start, w] of marks) { if (start <= at) hit = w; else break; }
+    if (hit === litWord) return;
+    if (litWord) litWord.classList.remove('hl');
+    litWord = hit;
+    if (hit) hit.classList.add('hl');
+    if (hit) keepInView(hit);
+  }
+  // a word said below (or above) the screen comes into view, so the eyes can follow the voice
+  function keepInView(w) {
+    const r = w.getBoundingClientRect();
+    if (r.height && (r.bottom > window.innerHeight || r.top < 0)) w.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+  function unlight() {
+    if (litWord) litWord.classList.remove('hl');
+    litWord = null;
+  }
+
+  /* ------------------------------------------------------------ read aloud */
+  let readingEl = null;
+  function pickVoice() {
+    const vs = window.speechSynthesis ? speechSynthesis.getVoices() : [];
+    return vs.find(v => v.default && /^en/i.test(v.lang)) || vs.find(v => /^en[-_]US/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null;
+  }
+  let speaking = null;   // the reading now playing; marked when something stops it
+  function stopReading() {
+    if (speaking) speaking.stopped = true;
+    unlight();
+    try { window.speechSynthesis && speechSynthesis.cancel(); } catch (e) { /* no speech on this device */ }
+    if (readingEl) readingEl.classList.remove('reading');
+    readingEl = null;
+  }
+  // onHeard runs only if the reading plays to the end (not stopped by another 🔊 or by leaving the page).
+  // Returns false when this computer cannot read aloud.
+  function readAloud(text, el, onHeard, marks) {
+    stopReading();
+    if (!window.speechSynthesis) return false;
+    const u = new SpeechSynthesisUtterance(text);
+    speaking = u;
+    if (marks) u.onboundary = e => { if (speaking === u) lightAt(marks, e.charIndex); };
+    u.rate = READ_RATE;
+    const v = pickVoice();
+    if (v) { u.voice = v; u.lang = v.lang; } else { u.lang = 'en-US'; }
+    if (el) { el.classList.add('reading'); readingEl = el; }
+    u.onend = u.onerror = e => {
+      if (el) el.classList.remove('reading');
+      if (readingEl === el) readingEl = null;
+      if (speaking === u) { speaking = null; unlight(); }
+      if (onHeard && e.type === 'end' && !u.stopped) onHeard();
+    };
+    speechSynthesis.speak(u);
+    return true;
+  }
+  // Several lines, one after another, 900 ms apart, each its own short reading (Chrome can cut
+  // off one long reading partway). onHeard runs after the last line ends, unless it was stopped.
+  function readLines(lines, el, onHeard) {   // lines: [{ text, marks }]
+    stopReading();
+    if (!window.speechSynthesis) return false;
+    const run = { stopped: false };
+    speaking = run;
+    if (el) { el.classList.add('reading'); readingEl = el; }
+    const done = ok => {
+      if (speaking === run) { speaking = null; unlight(); }
+      if (el) el.classList.remove('reading');
+      if (readingEl === el) readingEl = null;
+      if (ok && !run.stopped && onHeard) onHeard();
+    };
+    const say = i => {
+      if (run.stopped) return;
+      const u = new SpeechSynthesisUtterance(lines[i].text);
+      if (lines[i].marks) u.onboundary = e => { if (!run.stopped) lightAt(lines[i].marks, e.charIndex); };
+      u.rate = READ_RATE;
+      const v = pickVoice();
+      if (v) { u.voice = v; u.lang = v.lang; } else { u.lang = 'en-US'; }
+      u.onend = () => {
+        if (run.stopped) done(false);
+        else if (i + 1 < lines.length) setTimeout(() => say(i + 1), 900);
+        else done(true);
+      };
+      u.onerror = () => done(false);
+      speechSynthesis.speak(u);
+    };
+    say(0);
+    return run;
+  }
+  if (window.speechSynthesis) speechSynthesis.onvoiceschanged = () => {};
+
+  // 🔊 buttons read the words in their own box, or in the box data-box points at
+  const sayBtn = (label, box) => `<button type="button" class="say"${box ? ` data-box="${box}"` : ''} aria-label="${esc(label || 'Read aloud')}">🔊</button>`;
+  document.addEventListener('click', e => {
+    const b = e.target.closest('.say');
+    if (!b) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const box = b.dataset.box ? document.querySelector(b.dataset.box) : b.closest('[data-read-box]');
+    if (!box) return;
+    const { text, marks } = spokenOf(box);
+    readAloud(text, box, null, marks);
+  }, true);
+
+  /* ------------------------------------------------------------ pictures */
+  function barsSVG({ den, shaded }) {
+    const w = 72, h = 168, gap = 20, ch = h / den;
+    const W = shaded.length * w + (shaded.length - 1) * gap + 4;
+    let s = '';
+    shaded.forEach((k, b) => {
+      const x = 2 + b * (w + gap);
+      for (let i = 0; i < den; i++) {
+        s += `<rect x="${x}" y="${(2 + i * ch).toFixed(2)}" width="${w}" height="${ch.toFixed(2)}" class="cell${i >= den - k ? ' on' : ''}"/>`;
+      }
+    });
+    return `<div class="model-wrap"><svg class="model" viewBox="0 0 ${W} ${h + 4}" width="${W}" height="${h + 4}" role="img" aria-label="Bar model">${s}</svg></div>`;
+  }
+  function gridsSVG(list) {
+    const cell = 46;
+    const figs = list.map(g => {
+      const W = g.cols * cell + 4, H = g.rows * cell + 4;
+      let s = '';
+      for (let c = 0; c < g.cols; c++) {
+        for (let r = 0; r < g.rows; r++) {
+          const on = c * g.rows + r < g.shaded;
+          s += `<rect x="${2 + c * cell}" y="${2 + r * cell}" width="${cell}" height="${cell}" class="cell${on ? ' on' : ''}"/>`;
+        }
+      }
+      return `<figure class="grid-fig"><figcaption>${esc(g.label)}</figcaption><svg class="model" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${esc(g.label)}">${s}</svg></figure>`;
+    }).join('');
+    return `<div class="model-wrap grids">${figs}</div>`;
+  }
+  function nlineSVG({ den, at, label }) {
+    const W = 460, x0 = 40, x1 = 420, y = 56;
+    const step = (x1 - x0) / den;
+    let s = `<line x1="8" y1="${y}" x2="${W - 8}" y2="${y}" class="axis"/>`;
+    s += `<path d="M8 ${y} l12 -7 v14 z" class="arrow"/><path d="M${W - 8} ${y} l-12 -7 v14 z" class="arrow"/>`;
+    for (let i = 0; i <= den; i++) {
+      const x = x0 + i * step;
+      s += `<line x1="${x.toFixed(2)}" y1="${y - 10}" x2="${x.toFixed(2)}" y2="${y + 10}" class="tick"/>`;
+    }
+    s += `<text x="${x0}" y="${y + 36}" class="nl-num">0</text><text x="${x1}" y="${y + 36}" class="nl-num">1</text>`;
+    const px = x0 + at * step;
+    s += `<circle cx="${px.toFixed(2)}" cy="${y}" r="7" class="pt"/><text x="${px.toFixed(2)}" y="${y - 20}" class="nl-pt">${esc(label)}</text>`;
+    return `<div class="model-wrap"><svg class="model nline" viewBox="0 0 ${W} 100" width="${W}" height="100" role="img" aria-label="Number line from 0 to 1">${s}</svg></div>`;
+  }
+
+  /* ------------------------------------------------------------ item pieces */
+  function partHTML(p) {
+    if (p.p) return `<p class="stem-p">${sayHTML(p.p)}</p>`;
+    if (p.eq) return `<div class="stem-eq">${sayHTML(p.eq)}</div>`;
+    if (p.bullets) return `<ul class="stem-list">${p.bullets.map(b => `<li>${sayHTML(b)}</li>`).join('')}</ul>`;
+    if (p.steps) return `<div class="stem-steps">${p.steps.map(st => `<div>${sayHTML(st)}</div>`).join('')}</div>`;
+    if (p.bubbles) {
+      return `<div class="bubbles">${p.bubbles.map(([n, t]) =>
+        `<div class="bubble"><div class="bubble-body"><b>${wordSpan(`${esc(n)}:`, `${n} says:`)}</b> ${sayHTML(t)}</div><span class="puff p1"></span><span class="puff p2"></span></div>`).join('')}</div>`;
+    }
+    if (p.bars) return barsSVG(p.bars);
+    if (p.grids) return gridsSVG(p.grids);
+    if (p.nline) return nlineSVG(p.nline);
+    return '';
+  }
+  // the question box: every part, then the question it asks
+  const stemHTML = it => `${it.parts.map(partHTML).join('')}${it.ask ? `<p class="ask">${sayHTML(it.ask)}</p>` : ''}`;
+  const reminderHTML = it => `${sayBtn('Read the reminder')}<span class="reminder-text"><span aria-hidden="true">💡</span> <b>${wordSpan('Reminder:', 'Reminder:')}</b> ${sayHTML(it.hint)}</span>`;
+
+  // the feedback box for one answer: right, a wrong choice, a typed answer that matches a trap, or another wrong answer
+  function whyOf(it, ok, picked) {
+    if (ok) return '';
+    if (it.type === 'mc') return it.choices[picked].why || '';
+    const trap = (it.traps || []).find(t => sameValue(parseFrac(String(picked)), parseFrac(t.v)));
+    return trap ? trap.why : '';
+  }
+  function feedbackHTML(it, ok, picked) {
+    const why = whyOf(it, ok, picked);
+    // a <div>, not a <p>: the choice lines are <div>s, and a <div> inside a <p> splits the paragraph
+    const answerLine = ok ? '' : (it.type === 'mc'
+      ? `<div class="fb-answer">${sayHTML('The correct answer is', false)} <b>${'ABCD'[it.answer]}</b>: <div class="ans-inline">${linesSayHTML(it.choices[it.answer].t)}</div></div>`
+      : `<div class="fb-answer">${sayHTML(`The answer is {${it.key}}`, false)} ${sayHTML('(or any fraction equal to it).')}</div>`);
+    return `
+      <div class="fb-head"><span>${ok ? '✅' : '❌'} ${sayHTML(ok ? 'Correct!' : 'Not quite.')}</span>${sayBtn('Read the feedback')}</div>
+      ${why ? `<p class="fb-why">${sayHTML(why)}</p>` : ''}
+      ${answerLine}
+      <div class="fb-explain"><b>${sayHTML('How to solve it:', false)}</b> ${sayHTML(it.explain)}</div>`;
+  }
+
+  // a one-line summary for the results list and the answer key
+  function itemSummary(it) {
+    const eqs = it.parts.filter(p => p.eq).map(p => p.eq);
+    const ps = it.parts.filter(p => p.p).map(p => p.p);
+    if (it.type === 'entry') return eqs.length ? `${ps[0]} ${eqs[0]}` : ps.length > 1 ? `${ps[0]} ${ps[ps.length - 1]}` : ps[0] || '';
+    if (it.ask && eqs.length) return `${it.ask} (${eqs.join('; ')})`;
+    if (it.ask && ps.length) return `${ps[0]} ${it.ask}`;
+    return it.ask || ps[0] || '';
+  }
+  const keyText = it => it.type === 'mc' ? it.choices[it.answer].t : `{${it.key}}`;
+
+  /* ------------------------------------------------------------ fractions */
+  const parseFrac = s => { const [n, d] = String(s).split('/').map(Number); return [n, d]; };
+  const sameValue = (a, b) => a[0] * b[1] === b[0] * a[1];
+
+  /* ------------------------------------------------------------ screens */
+  function show(id) {
+    stopReading();
+    document.querySelectorAll('.screen').forEach(s => { s.hidden = s.id !== id; });
+    document.body.dataset.screen = id;
+    window.scrollTo(0, 0);
+    autoRefresh();   // Class Scores asks her sheet again every 20 seconds while it shows; any other screen stops it
+  }
+
+  let state = null;     // { name, set, idx, results: { id: { ok, picked } }, started }
+  let selected = null;  // chosen choice index on an MC item
+  let locked = false;   // true once the item is checked
+
+  function setBanner() {
+    const b = $('#set-banner');
+    b.textContent = setLabel(state.set);
+    b.className = `set-pill set-${levelOf(state.set)}`;
+  }
+
+  /* ------------------------------------------------------------ saved places
+     A student's unfinished set is kept under their own teacher + name, so two students on one
+     Chromebook never erase each other (nor the same name in the other class), and it goes to the
+     score sheet after every answer, so it follows them to any device and the teacher sees it in progress. */
+  let chooseName = '';     // the student on the choice page: first and last name, as the sheet keeps it
+  let chooseFirst = '';    // their first name, to say hi
+  let chooseTeacher = '';  // their teacher (the class link they came in on)
+  let choosePlaces = {};   // set → their unfinished state
+  let chooseDone = {};     // level → { best, tries } of their finished takes (opens the next level)
+  let looking = false;     // checking her sheet for this student's work
+  // Levels go in order: each one opens when the one before it is finished (Marcos 11/2)
+  const ORDER = Object.keys(SET_NAMES);
+  const isOpen = set => GUEST || ORDER.indexOf(set) === 0 || ORDER[ORDER.indexOf(set) - 1] in chooseDone || Boolean(choosePlaces[set]);
+  const normName = n => String(n || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  // one student = their teacher + their name: the same name in the other class is another student
+  const who = (teacher, name) => `${teacher}|${normName(name)}`;
+  const placeKey = st => `${who(st.teacher, st.name)}|${st.set}`;
+  const allPlaces = () => store.get(PLACES_KEY, {});
+  const savePlace = st => store.set(PLACES_KEY, { ...allPlaces(), [placeKey(st)]: st });
+  function dropPlace(st) {
+    const rest = { ...allPlaces() };
+    delete rest[placeKey(st)];
+    store.set(PLACES_KEY, rest);
+  }
+  const unfinished = st => Boolean(st && SETS[st.set] && st.saveId && st.idx > 0 && st.idx < SETS[st.set].length);
+
+  function localPlaces(teacher, name) {
+    const out = {};
+    Object.values(allPlaces()).forEach(st => {
+      if (who(st.teacher, st.name) !== who(teacher, name) || !unfinished(st)) return;
+      const l = levelOf(st.set);
+      if (!out[l] || (st.updated || 0) > (out[l].updated || 0)) out[l] = st;
+    });
+    return out;
+  }
+
+  // a row from the teacher's tab of the score sheet back into a place this page can keep going from
+  function placeFromSheet(p, teacher) {
+    if (!SETS[p.set]) return null;
+    let answers;
+    try { answers = JSON.parse(p.answers || '{}'); } catch (e) { return null; }
+    const idx = Number(p.answered) || 0;
+    const results = {};
+    SETS[p.set].slice(0, idx).forEach(it => { const a = answers[it.id]; if (a) results[it.id] = { ok: Boolean(a[0]), picked: a[1] }; });
+    const st = { name: p.name, teacher, set: p.set, idx, results, started: Date.parse(p.startedAt) || Date.now(),
+      saveId: p.saveId, updated: Date.parse(p.updatedAt) || 0 };
+    return unfinished(st) && Object.keys(results).length === idx ? st : null;
+  }
+
+  // every update for the score sheet goes out here: into the outbox, then sent. Try it as a student sends nothing;
+  // with no score sheet connected (preview) sheet.js keeps nothing to send.
+  function toSheet(rec) {
+    if (preview || GUEST) return;   // a guest sends nothing
+    Sheet.queue(rec);
+    Sheet.flush();
+  }
+
+  // what goes to the score sheet: the attempt so far, or finished (with the student's teacher: her tab)
+  function attemptRecord(st, finished) {
+    const items = SETS[st.set];
+    const done = items.slice(0, st.idx);
+    const right = done.filter(it => (st.results[it.id] || {}).ok).length;
+    const pct = finished ? Math.round((right / items.length) * 100) : (st.idx ? Math.round((right / st.idx) * 100) : 0);
+    const answers = {};
+    done.forEach(it => { const r = st.results[it.id]; if (r) answers[it.id] = [r.ok ? 1 : 0, r.picked]; });
+    return {
+      saveId: st.saveId, teacher: st.teacher, name: st.name, set: st.set, pts: right, tot: items.length, pct,
+      grade: finished ? gradeFor(pct).l : '',
+      missed: done.filter(it => !(st.results[it.id] || {}).ok).map(it => it.id).join(', '),
+      finishedAt: finished ? new Date().toISOString() : '',
+      status: finished ? 'Finished' : 'In progress', answered: st.idx,
+      answers: JSON.stringify(answers), startedAt: new Date(st.started).toISOString()
+    };
+  }
+
+  // The moment the last question is checked, the set counts: kept on this device and sent
+  // to the score sheet, even if the page closes before "See My Score"
+  function recordFinish(st) {
+    const rec = attemptRecord(st, true);
+    const now = new Date();
+    const scores = store.get(SCORES_KEY, []);
+    scores.push({
+      teacher: st.teacher, name: st.name, set: st.set, pts: rec.pts, tot: rec.tot, pct: rec.pct, grade: rec.grade,
+      date: `${now.toLocaleDateString()} at ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+      missed: rec.missed ? rec.missed.split(', ') : []
+    });
+    store.set(SCORES_KEY, scores);
+    dropPlace(st);
+    toSheet(rec);
+  }
+
+  // finished takes on this device, per level: best score and how many (the score sheet adds the other devices)
+  function localDone(teacher, name) {
+    const out = {};
+    store.get(SCORES_KEY, []).forEach(sc => {
+      if (who(sc.teacher, sc.name) !== who(teacher, name) || !SETS[sc.set]) return;
+      const d = out[levelOf(sc.set)] || (out[levelOf(sc.set)] = { best: 0, tries: 0 });
+      d.best = Math.max(d.best, sc.pct);
+      d.tries += 1;
+    });
+    return out;
+  }
+
+  /* The class teacher's PIN: past the last take, to start over mid-set, and to skip ahead (as on the Grade 5
+     Inferences site). The PIN goes to the score sheet's script and is checked there (sheet.js loadScores, verify
+     only); no PIN is in this page. With no score sheet connected (preview) no PIN can be checked, so she is asked
+     to say yes instead. */
+  const PIN_SAYS = {
+    'Wrong PIN': 'That PIN did not work.',
+    Locked: 'Too many wrong PINs on this computer. Try again in 10 minutes.',
+    'PIN not set': "This class's PIN is not set up in the score sheet yet."
+  };
+  async function teacherSays(what, teacher = chooseTeacher || CLASS) {
+    const t = TEACHERS[teacher];
+    if (!t) return false;
+    if (!Sheet.connected) {
+      return window.confirm(`Preview: no score sheet is connected, so no PIN is checked here.\nOnce it is connected, ${t}'s PIN is needed to ${what}.\n\nGo ahead?`);
+    }
+    const typed = window.prompt(`${t}'s PIN to ${what}:`);
+    if (typed === null) return false;
+    try {
+      const r = await Sheet.loadScores(teacher, typed.trim(), true);
+      if (r && r.ok) return true;
+      window.alert(PIN_SAYS[r && r.error] || 'That PIN did not work.');
+    } catch (e) {
+      window.alert("Couldn't reach the score sheet. Check the internet, then try again.");
+    }
+    return false;
+  }
+  // after the PIN: still the same student on the choose page (not another student, not another screen)
+  const stillHere = me => who(chooseTeacher, chooseName) === me && document.body.dataset.screen === 'choose';
+
+  // A level with a saved place keeps going there. Otherwise the next take: take 1, then take 2
+  // with new numbers. Past the last take (and to start over mid-set) needs the teacher's PIN
+  // (Marcos 11/2: "require a pin for a restart").
+  async function startSet(level) {
+    if (looking) return;   // still looking for saved work: nothing starts yet
+    if (!isOpen(level)) { skipAhead(level); return; }
+    if (choosePlaces[level]) { beginSet(choosePlaces[level].set); return; }
+    const takes = TAKES[level];
+    const tries = (chooseDone[level] || {}).tries || 0;
+    const me = who(chooseTeacher, chooseName);
+    // a guest takes anything as many times as they like: no PIN
+    if (tries >= takes.length && !GUEST && !(await teacherSays(`let ${chooseName} take ${SET_NAMES[level]} again`) && stillHere(me))) return;
+    beginSet(takes[tries % takes.length]);
+  }
+
+  // A locked set (the one before it is not finished): the teacher's PIN lets this one student start it now (11/18).
+  // Nothing is opened for anyone else, and nothing is kept: once started, the set is this student's saved place.
+  async function skipAhead(level) {
+    if (GUEST) return;   // a guest has every set open: no PIN
+    const me = who(chooseTeacher, chooseName);
+    if (!SETS[level] || !(await teacherSays(`let ${chooseName} start ${SET_NAMES[level]} now`))) return;
+    if (!stillHere(me)) return;
+    if (choosePlaces[level]) { beginSet(choosePlaces[level].set); return; }   // saved work found meanwhile: keep going
+    const tries = (chooseDone[level] || {}).tries || 0;
+    beginSet(TAKES[level][tries % TAKES[level].length]);
+  }
+
+  async function startOver(level) {
+    const old = choosePlaces[level];
+    const me = who(chooseTeacher, chooseName);
+    if (!old || (!GUEST && !(await teacherSays(`let ${chooseName} start ${setLabel(old.set)} over`)))) return;
+    if (!stillHere(me) || choosePlaces[level] !== old) return;
+    dropPlace(old);
+    toSheet({ saveId: old.saveId, teacher: old.teacher || chooseTeacher, status: 'Restarted' });
+    delete choosePlaces[level];
+    beginSet(old.set);
+  }
+
+  function beginSet(set) {
+    const place = choosePlaces[levelOf(set)];
+    state = place && place.set === set ? { ...place, name: chooseName || place.name, teacher: chooseTeacher }
+      : { name: chooseName, teacher: chooseTeacher, set, idx: 0, results: {}, started: Date.now(), saveId: Sheet.newSaveId() };
+    renderItem();
+  }
+
+  function renderItem() {
+    const items = SETS[state.set];
+    if (state.idx >= items.length) { showResults(); return; }
+    const it = items[state.idx];
+    selected = null;
+    locked = false;
+    setBanner();
+    $('#q-count').textContent = `Question ${state.idx + 1} of ${items.length}`;
+    $('#progress-fill').style.width = `${(state.idx / items.length) * 100}%`;
+
+    let answerArea;
+    if (it.type === 'mc') {
+      answerArea = `<div class="choices" role="radiogroup" aria-label="Answer choices">${it.choices.map((ch, i) =>
+        `<div class="choice" role="radio" aria-checked="false" tabindex="0" data-i="${i}" data-read-box>
+           <span class="letter">${'ABCD'[i]}</span>
+           <span class="choice-body">${linesSayHTML(ch.t)}</span>
+           ${sayBtn(`Read choice ${'ABCD'[i]}`)}
+         </div>`).join('')}</div>`;
+    } else {
+      answerArea = `<div class="entry">
+          <div class="entry-label">Type your answer as a fraction.</div>
+          <div class="frac-in">
+            <input id="ans-n" type="text" inputmode="numeric" autocomplete="off" maxlength="4" aria-label="Top number (numerator)">
+            <div class="frac-bar"></div>
+            <input id="ans-d" type="text" inputmode="numeric" autocomplete="off" maxlength="4" aria-label="Bottom number (denominator)">
+          </div>
+        </div>`;
+    }
+
+    // Warm Up: a 💡 Reminder that is open and reads itself (the MM2 Warm-Up pattern), with its own 🔊
+    const remind = levelOf(state.set) === 'W' && it.hint;
+    const reminder = remind
+      ? `<div class="reminder" data-read-box>${reminderHTML(it)}</div>`
+      : '';
+
+    $('#item').innerHTML = `
+      <div class="item-head"><span class="item-num">${state.idx + 1}</span>${sayBtn('Read the question', '#item .stem')}</div>
+      <div class="stem" data-read-box>${stemHTML(it)}</div>
+      ${reminder}
+      ${answerArea}
+      <div id="feedback" class="feedback" hidden></div>
+      <button type="button" id="check-btn" class="btn" disabled>Check Answer</button>`;
+
+    if (remind) {
+      const shown = it;
+      setTimeout(() => {
+        const btn = document.querySelector('#item .reminder .say');
+        if (btn && state && SETS[state.set][state.idx] === shown && !locked) btn.click();
+      }, 400);
+    }
+
+    if (it.type === 'mc') {
+      document.querySelectorAll('.choice').forEach(el => {
+        const pick = () => {
+          if (locked) return;
+          selected = Number(el.dataset.i);
+          document.querySelectorAll('.choice').forEach(c => {
+            const on = c === el;
+            c.classList.toggle('picked', on);
+            c.setAttribute('aria-checked', String(on));
+          });
+          $('#check-btn').disabled = false;
+        };
+        el.addEventListener('click', pick);
+        el.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); pick(); } });
+      });
+    } else {
+      const n = $('#ans-n'), d = $('#ans-d');
+      const update = () => {
+        [n, d].forEach(inp => { inp.value = inp.value.replace(/\D/g, ''); });
+        $('#check-btn').disabled = !(n.value && d.value && Number(d.value) > 0);
+      };
+      n.addEventListener('input', update);
+      d.addEventListener('input', update);
+      n.addEventListener('keydown', e => { if (e.key === 'Enter' || (e.key === '/' && n.value)) { e.preventDefault(); d.focus(); } });
+      d.addEventListener('keydown', e => { if (e.key === 'Enter' && !$('#check-btn').disabled) checkAnswer(); });
+    }
+    $('#check-btn').addEventListener('click', () => (locked ? nextItem() : checkAnswer()));
+    show('quiz');
+    syncTeachBar();
+  }
+
+  function checkAnswer() {
+    const it = SETS[state.set][state.idx];
+    let ok, picked;
+    if (it.type === 'mc') {
+      if (selected == null) return;
+      ok = selected === it.answer;
+      picked = selected;
+    } else {
+      const n = Number($('#ans-n').value), d = Number($('#ans-d').value);
+      if (!$('#ans-n').value || !(d > 0)) return;
+      ok = sameValue([n, d], parseFrac(it.key));
+      picked = `${n}/${d}`;
+    }
+    locked = true;
+    state.results[it.id] = { ok, picked };
+    state.idx += 1; // saved one ahead, so coming back never asks this item again
+    state.updated = Date.now();
+    if (preview) { showFeedback(it, ok, picked); return; }   // her preview: nothing kept here, nothing sent
+    if (state.idx >= SETS[state.set].length) recordFinish(state);
+    else {
+      savePlace(state);
+      toSheet(attemptRecord(state, false));
+    }
+    showFeedback(it, ok, picked);
+  }
+
+  function showFeedback(it, ok, picked) {
+    if (it.type === 'mc') {
+      document.querySelectorAll('.choice').forEach(c => {
+        const i = Number(c.dataset.i);
+        c.classList.add('locked');
+        c.setAttribute('aria-disabled', 'true');
+        if (i === it.answer) c.classList.add('is-right');
+        else if (i === picked) c.classList.add('is-wrong');
+      });
+    } else {
+      $('#ans-n').disabled = true;
+      $('#ans-d').disabled = true;
+    }
+    const fb = $('#feedback');
+    fb.className = `feedback ${ok ? 'ok' : 'no'}`;
+    fb.setAttribute('data-read-box', '');
+    fb.innerHTML = feedbackHTML(it, ok, picked);
+    fb.hidden = false;
+
+    const last = state.idx >= SETS[state.set].length;
+    const btn = $('#check-btn');
+    btn.textContent = last ? 'See My Score' : 'Next Question →';
+    btn.disabled = false;
+    $('#progress-fill').style.width = `${(state.idx / SETS[state.set].length) * 100}%`;
+    fb.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function nextItem() {
+    renderItem();
+  }
+
+  /* ------------------------------------------------------------ results */
+  function gradeFor(pct) {
+    if (pct >= 97) return { l: 'A+', c: 'g-a', m: 'Outstanding! Perfect mastery.' };
+    if (pct >= 93) return { l: 'A', c: 'g-a', m: 'Excellent work!' };
+    if (pct >= 90) return { l: 'A-', c: 'g-a', m: 'Great job! Very strong understanding.' };
+    if (pct >= 87) return { l: 'B+', c: 'g-b', m: 'Very good effort!' };
+    if (pct >= 83) return { l: 'B', c: 'g-b', m: 'Good job! You’re getting the hang of it.' };
+    if (pct >= 80) return { l: 'B-', c: 'g-b', m: 'Solid work, keep it up!' };
+    if (pct >= 70) return { l: 'C', c: 'g-c', m: 'Fair job. A little more review will help.' };
+    if (pct >= 60) return { l: 'D', c: 'g-d', m: 'Almost there. Try again!' };
+    return { l: 'F', c: 'g-d', m: 'Keep practicing. You can do this!' };
+  }
+
+  function pickedHTML(it, picked) {
+    if (picked == null) return '—';
+    return it.type === 'mc' ? linesHTML(it.choices[picked].t) : mathHTML(`{${picked}}`);
+  }
+
+  // "See My Score": the set was already saved the moment its last question was checked
+  function showResults() {
+    const items = SETS[state.set];
+    const pts = items.filter(it => state.results[it.id] && state.results[it.id].ok).length;
+    const pct = Math.round((pts / items.length) * 100);
+    const g = gradeFor(pct);
+
+    $('#r-name').textContent = `${state.name} · ${setLabel(state.set)}`;
+    $('#r-pts').textContent = `${pts}/${items.length}`;
+    $('#r-pct').textContent = `${pct}%`;
+    const gr = $('#r-grade');
+    gr.textContent = g.l;
+    gr.className = `stat ${g.c}`;
+    $('#r-msg').textContent = g.m;
+    $('#reward').hidden = pct < 80;
+    $('#reward-msg').textContent = pct >= 90 ? 'Excellent Mastery!' : 'Solid Achievement!';
+
+    // skill by skill
+    const bySkill = {};
+    items.forEach((it, i) => {
+      const s = bySkill[it.skill] || (bySkill[it.skill] = { right: 0, total: 0, missed: [] });
+      s.total += 1;
+      if ((state.results[it.id] || {}).ok) s.right += 1;
+      else s.missed.push({ it, n: i + 1 });
+    });
+    $('#skill-table').innerHTML = Object.keys(bySkill).map(k => {
+      const s = bySkill[k];
+      const cls = s.right === s.total ? 'all' : (s.right === 0 ? 'none' : 'some');
+      return `<tr class="${cls}"><td>${esc(SKILL_NAMES[k])}</td><td>${s.right} of ${s.total}</td></tr>`;
+    }).join('');
+
+    const missed = Object.keys(bySkill).filter(k => bySkill[k].missed.length);
+    $('#missed').innerHTML = missed.length ? `<h3 class="missed-title">Questions to look at again</h3>` + missed.map(k =>
+      `<div class="miss-group"><h4>${esc(SKILL_NAMES[k])}</h4>${bySkill[k].missed.map(({ it, n }) => `
+        <div class="miss">
+          <div class="miss-q"><b>Question ${n}:</b> ${mathHTML(itemSummary(it))}</div>
+          <div class="miss-row"><span class="miss-label you">You answered</span><span>${pickedHTML(it, (state.results[it.id] || {}).picked)}</span></div>
+          <div class="miss-row"><span class="miss-label key">Answer</span><span>${it.type === 'mc' ? linesHTML(keyText(it)) : mathHTML(keyText(it))}</span></div>
+        </div>`).join('')}</div>`).join('')
+      : `<p class="all-right">You got every question right! 🎉</p>`;
+
+    $('#progress-fill').style.width = '100%';
+    show('results');
+    $('#home-btn').textContent = preview ? '← Teacher screen' : 'Return to Menu';
+    if (preview) $('#r-sent').hidden = true;
+    else sendToTeacher(state);
+    if (pct >= 80 && window.confetti) {
+      window.confetti(pct >= 90 ? { particleCount: 150, spread: 70, origin: { y: 0.6 } } : { particleCount: 50, spread: 45, origin: { y: 0.7 }, scalar: 0.8 });
+    }
+    state = null;
+  }
+
+  // the score goes to the student's own teacher (preview: no note, nothing is sent)
+  function sendToTeacher(st) {
+    const note = $('#r-sent');
+    if (GUEST) {   // a guest: nothing was sent or kept, and they are told so (not read aloud)
+      note.hidden = false;
+      note.className = 'sent-note sent-wait';
+      note.textContent = '👀 Guest view — this score was not saved.';
+      return;
+    }
+    note.hidden = !Sheet.connected;
+    if (note.hidden) return;
+    const saveId = st.saveId;
+    const t = TEACHERS[st.teacher] || 'your teacher';
+    note.dataset.saveId = saveId;
+    note.className = 'sent-note';
+    note.textContent = `Sending your score to ${t}…`;
+    // A pass already under way (say, from page load) picks this save up too
+    Sheet.flush()
+      .then(() => {
+        if (note.dataset.saveId !== saveId) return;
+        const sent = !Sheet.isPending(saveId);
+        note.className = `sent-note ${sent ? 'sent-ok' : 'sent-wait'}`;
+        note.textContent = sent ? `✅ ${t} has your score.`
+          : `Your score is saved on this computer. It will go to ${t} the next time this page opens.`;
+      });
+  }
+
+  /* ------------------------------------------------------------ teacher: class scores
+     One class at a time: the teacher picks her class (a class link shows only that class) and types her PIN; the
+     score sheet's script checks it and sends back only her class's tab. The PIN is kept in memory only, for Refresh
+     and the updates by itself, and dropped on Back. Preview (no score sheet): sample data, invented students. */
+  let tPin = null;      // her PIN, in memory only, while Class Scores is open
+  let tTeacher = '';    // whose class is showing
+  let tSample = false;  // preview: the sample data, not a real class
+  let classList = [];
+  let heatSet = 'W';
+  let heatDone = [];    // the students on the heat map now (the take shown), with what they picked, for the box
+  let heatStats = [];   // the heat map's numbers per question, for the box
+
+  const rowTime = r => Date.parse(r.updatedAt || r.finishedAt || r.savedAt) || 0;
+
+  // One entry per student (names matched without case or extra spaces). Per level: every
+  // finished take (first, latest, best), "now" = a take still in progress (unless they
+  // finished it later), and how many times she let them start over.
+  function groupStudents(rows) {
+    const students = {};
+    rows.forEach(r => {
+      const key = normName(r.name);
+      if (!key || !SETS[r.set]) return;
+      const st = students[key] || (students[key] = { name: '', sets: {} });
+      // rows come oldest first, so the newest spelling wins; "maya" shows as "Maya"
+      st.name = String(r.name).trim().replace(/\s+/g, ' ').replace(/(^|\s)(\S)/g, (m, sp, c) => sp + c.toUpperCase());
+      const lvl = levelOf(r.set);
+      const cell = st.sets[lvl] || (st.sets[lvl] = { takes: [], first: null, best: null, latest: null, now: null });
+      if (r.status === 'In progress') {
+        if (!cell.now || rowTime(r) > rowTime(cell.now)) cell.now = r;
+        return;
+      }
+      if (r.status === 'Restarted') { cell.restarts = (cell.restarts || 0) + 1; return; } // started over, with the teacher's PIN
+      if (r.status !== 'Finished') return;
+      cell.takes.push(r);
+      if (!cell.best || r.pct > cell.best.pct) cell.best = r;
+      if (!cell.first || rowTime(r) < rowTime(cell.first)) cell.first = r;
+      if (!cell.latest || rowTime(r) >= rowTime(cell.latest)) cell.latest = r;
+    });
+    Object.keys(students).forEach(k => {
+      const st = students[k];
+      Object.keys(st.sets).forEach(s => {
+        const c = st.sets[s];
+        if (c.now && c.latest && rowTime(c.latest) >= rowTime(c.now)) c.now = null;
+        if (!c.latest && !c.now) delete st.sets[s];
+      });
+      if (!Object.keys(st.sets).length) delete students[k];
+    });
+    return Object.values(students).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  }
+
+  function ago(iso) {
+    const mins = Math.round((Date.now() - (Date.parse(iso) || 0)) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins} min ago`;
+    if (mins < 24 * 60) return `${Math.round(mins / 60)} hr ago`;
+    return new Date(iso).toLocaleDateString();
+  }
+
+  function classHTML(rows, list) {
+    const sets = Object.keys(SET_NAMES);
+    const finished = rows.filter(r => SETS[r.set] && r.status === 'Finished');
+    const working = list.flatMap(st => sets.filter(s => st.sets[s] && st.sets[s].now).map(s => ({ name: st.name, set: s, r: st.sets[s].now })))
+      .sort((a, b) => rowTime(b.r) - rowTime(a.r));
+    // a save that waited offline arrives late, so take the newest finish time, not the last row
+    const times = finished.map(r => Date.parse(r.finishedAt || r.savedAt)).filter(n => !isNaN(n));
+    const last = new Date(Math.max(...times));
+    const lastText = times.length ? ` · last finished ${last.toLocaleDateString()} at ${last.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '';
+
+    // one take: its score; two or more: 1st take → latest take, so growth shows
+    const pctHTML = r => `<span class="${gradeFor(r.pct).c}">${r.pct}%</span>`;
+    const cellHTML = c => {
+      if (!c) return '<span class="t-none">—</span>';
+      const n = c.takes.length;
+      const done = !n ? ''
+        : n === 1 ? `<b>${pctHTML(c.first)}</b><span>1 take</span>`
+        : `<b>${pctHTML(c.first)} → ${pctHTML(c.latest)}</b><span>${n} takes · best ${c.best.pct}%</span>`;
+      const now = c.now ? `<span class="t-now">▶ ${c.now.answered} of ${c.now.tot || 15} done${takeNo(c.now.set) > 1 ? ' (take 2)' : ''}</span>` : '';
+      const again = c.restarts ? `<span class="t-restart">↺ ${c.restarts} ${c.restarts === 1 ? 'restart' : 'restarts'}</span>` : '';
+      return done + now + again;
+    };
+    const table = `<div class="t-wrap"><table class="t-table"><thead><tr><th>Student</th>${sets.map(s => `<th>${SET_NAMES[s]}</th>`).join('')}</tr></thead>
+      <tbody>${list.map(st => `<tr><td>${esc(st.name)}</td>${sets.map(s => `<td>${cellHTML(st.sets[s])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+
+    const workingHTML = working.length ? `<h3 class="t-sub">In progress <span>(saved after every answer · updates by itself every ${AUTO_MS / 1000} seconds)</span></h3>
+      <ul class="t-working">${working.map(w => `<li><b>${esc(w.name)}</b> · ${setLabel(w.r.set)} · ${w.r.answered} of ${w.r.tot || 15} done · ${w.r.pts} right
+        <span class="t-ago">${ago(w.r.updatedAt)}</span></li>`).join('')}</ul>` : '';
+
+    return `<p class="t-sum">${list.length} ${list.length === 1 ? 'student' : 'students'} · ${finished.length} finished ${finished.length === 1 ? 'set' : 'sets'} · ${working.length} in progress${lastText}</p>
+      ${workingHTML}
+      <h3 class="t-sub">Scores <span>(1st take → latest take · ▶ = working on it now)</span></h3>
+      ${table}
+      <h3 class="t-sub">Question heat map</h3>
+      <div class="t-modes" role="group" aria-label="Which take">
+        <button type="button" class="key-tab" data-mode="first">1st take</button>
+        <button type="button" class="key-tab" data-mode="latest">Latest take</button>
+      </div>
+      <div class="key-tabs t-tabs">${sets.map(s => `<button type="button" class="key-tab" data-heat="${s}">${SET_NAMES[s]}</button>`).join('')}</div>
+      <div id="t-heat"></div>
+      <div id="t-skillmap"></div>`;
+  }
+
+  const heatClass = pct => (pct >= 80 ? 'h-hi' : pct >= 60 ? 'h-mid' : pct >= 40 ? 'h-low' : 'h-bad');
+
+  // One row per student, one column per question. Take 2 asks the same kind of question in each
+  // spot with new numbers, so a column is one skill whichever take a student had.
+  let heatMode = 'latest';
+  const slotOf = id => Number(String(id).slice(-2));
+  const modeText = () => (heatMode === 'first' ? '1st take' : 'latest take');
+
+  // Start to finish on the clock (11/18): "under 1 min", "N min", "H hr M min"; "—" when a time is missing, unreadable or the finish is before the start
+  function takeTime(r) {
+    const ms = Date.parse(r.finishedAt) - Date.parse(r.startedAt);
+    if (!(ms >= 0)) return '—';
+    const mins = Math.floor(ms / 60000);
+    if (mins < 1) return 'under 1 min';
+    if (mins < 60) return `${mins} min`;
+    return `${Math.floor(mins / 60)} hr ${mins % 60} min`;
+  }
+
+  function heatHTML(level) {
+    const base = SETS[level];  // take 1: the example question shown for each spot
+    const done = classList.filter(st => st.sets[level] && st.sets[level].takes.length).map(st => {
+      const r = heatMode === 'first' ? st.sets[level].first : st.sets[level].latest;
+      return { name: st.name, key: normName(st.name), r, pct: r.pct, answers: answersOf(r),
+        missed: new Set(String(r.missed).split(',').map(x => x.trim()).filter(Boolean).map(slotOf)) };
+    });
+    heatDone = done;
+    heatStats = [];
+    if (!done.length) return `<p class="t-msg">No one has finished ${SET_NAMES[level]} yet.</p>`;
+
+    const stats = base.map((it, i) => {
+      const right = done.filter(d => !d.missed.has(i + 1)).length;
+      return { it, i, right, pct: Math.round((right / done.length) * 100) };
+    });
+    heatStats = stats;
+    // every question number and every ✓ / ✗ is a button: it opens the box under the map (11/18)
+    const heads = base.map((it, i) => `<th scope="col"><button type="button" class="h-qbtn" data-q="${i}" aria-expanded="false" aria-controls="t-qbox" title="${esc(SKILL_NAMES[it.skill])} · tap to see what everyone picked">${i + 1}</button></th>`).join('');
+    const cell = (d, si, i) => {
+      const miss = d.missed.has(i + 1);
+      const what = `${esc(d.name)} · question ${i + 1}: ${miss ? 'missed' : 'right'}`;
+      return `<td class="${miss ? 'h-miss' : 'h-ok'}"><button type="button" class="h-cell" data-s="${si}" data-q="${i}" aria-expanded="false" aria-controls="t-qbox" aria-label="${what}. Show the answer picked." title="${what} · tap to see the answer picked">${miss ? '✗' : '✓'}</button></td>`;
+    };
+    const body = done.map((d, si) => `<tr><th scope="row">${esc(d.name)}${takeNo(d.r.set) > 1 ? ' <span class="t-take">take 2</span>' : ''}</th>${base.map((it, i) => cell(d, si, i)).join('')}<td class="h-score ${gradeFor(d.pct).c}">${d.pct}%</td><td class="h-time">${takeTime(d.r)}</td></tr>`).join('');
+    const foot = `<tr><th scope="row">% right</th>${stats.map(s => `<td class="${heatClass(s.pct)}">${s.pct}</td>`).join('')}<td></td><td></td></tr>`;
+
+    // Most right first for the top 3, fewest right first for the bottom 3; ties go to the earlier question
+    const top = stats.slice().sort((a, b) => b.right - a.right || a.i - b.i).slice(0, 3);
+    const bottom = stats.slice().sort((a, b) => a.right - b.right || a.i - b.i).slice(0, 3);
+    const rankHTML = list => `<ol class="t-rank">${list.map(s => `<li><div class="t-rank-head"><b>Question ${s.i + 1}</b>
+      <span class="t-pill ${heatClass(s.pct)}">${s.right} of ${done.length} right · ${s.pct}%</span></div>
+      <div class="t-q"><i>${esc(SKILL_NAMES[s.it.skill])}:</i> ${mathHTML(itemSummary(s.it))}</div></li>`).join('')}</ol>`;
+    const twoTakes = TAKES[level].length > 1;
+
+    return `<p class="t-legend">Showing each student's <b>${modeText()}</b> · <span class="h-ok">✓</span> right · <span class="h-miss">✗</span> missed · bottom row = % of the ${done.length} ${done.length === 1 ? 'student' : 'students'} who got that question right · <b>tap a question number</b> to see what everyone picked · <b>tap a ✓ or ✗</b> to see that student's answer</p>
+      <div class="t-wrap"><table class="t-heat"><thead><tr><th scope="col">Student</th>${heads}<th scope="col">Score</th><th scope="col">Time</th></tr></thead>
+      <tbody>${body}</tbody><tfoot>${foot}</tfoot></table></div>
+      <p class="t-note t-time-note">Time = start to finish on the clock, so a break or a stop in the middle counts too.</p>
+      <div id="t-qbox" class="t-qbox" role="region" aria-live="polite" hidden></div>
+      <div class="t-rank-grid">
+        <div class="t-rank-box"><h4>⭐ Top 3 questions <span>most students right</span></h4>${rankHTML(top)}</div>
+        <div class="t-rank-box"><h4>🔁 Bottom 3 questions <span>reteach these first</span></h4>${rankHTML(bottom)}</div>
+      </div>
+      ${twoTakes ? '<p class="t-note">Take 2 asks the same kind of question in each spot with new numbers. The example questions shown are from take 1.</p>' : ''}`;
+  }
+
+  /* ------------------------------------------------------------ teacher: what each student picked (11/18)
+     Her rows keep every pick: answers = { id: [ok, picked] } (attemptRecord). A question number opens a box with what
+     everyone picked on the take shown (one group per take: take 2 has its own numbers and choices); a ✓ / ✗ adds that
+     student's answer and the note they saw for it. Anything a student's computer sent is checked before it is used. */
+  const L = i => 'ABCD'[i];
+  const answersOf = r => {
+    try { const a = JSON.parse(r.answers || '{}'); return a && typeof a === 'object' && !Array.isArray(a) ? a : {}; } catch (e) { return {}; }
+  };
+  // a typed answer as one group: spaces dropped (" 3/4" is "3/4"); null when it is not a fraction a student could type
+  function typedKey(picked) {
+    if (typeof picked !== 'string' && typeof picked !== 'number') return null;
+    const m = String(picked).replace(/\s+/g, '').match(/^(\d{1,6})\/(\d{1,6})$/);
+    return m ? `${Number(m[1])}/${Number(m[2])}` : null;
+  }
+  // one student's pick on one question: a choice number, or a typed fraction; null when nothing usable was saved
+  function pickOf(it, d) {
+    const a = d.answers[it.id];
+    if (!Array.isArray(a)) return null;
+    if (it.type === 'mc') return Number.isInteger(a[1]) && it.choices[a[1]] ? a[1] : null;
+    return typedKey(a[1]);
+  }
+  const typedRight = (it, p) => { const f = parseFrac(p); return f[1] > 0 && sameValue(f, parseFrac(it.key)); };
+  const pickHTML = (it, p) => (it.type === 'mc' ? `${L(p)}. ${linesHTML(it.choices[p].t)}` : mathHTML(`{${p}}`));
+  const rightHTML = it => (it.type === 'mc' ? `${L(it.answer)}. ${linesHTML(it.choices[it.answer].t)}`
+    : `${mathHTML(`{${it.key}}`)} <span class="key-note">(or any equal fraction)</span>`);
+
+  // How many picked each answer, and who: every choice of a choice question; each different typed answer of a type-in.
+  // The wrong answer picked most is marked only when 2 or more students picked it (every one on a tie).
+  function pickCounts(it, people) {
+    const saved = people.map(d => ({ name: d.name, p: pickOf(it, d) })).filter(x => x.p != null);
+    const base = it.type === 'mc'
+      ? it.choices.map((c, i) => ({ p: i, right: i === it.answer }))
+      : [...new Set(saved.map(x => x.p))].map(p => ({ p, right: typedRight(it, p) }));
+    const counted = base.map(r => {
+      const who = saved.filter(x => x.p === r.p).map(x => x.name);
+      return { ...r, who, n: who.length };
+    });
+    const rows = it.type === 'mc' ? counted
+      : counted.slice().sort((a, b) => b.n - a.n || Number(b.right) - Number(a.right) || a.p.localeCompare(b.p, undefined, { numeric: true }));
+    const most = Math.max(0, ...rows.filter(r => !r.right).map(r => r.n));
+    return { saved: saved.length, unsaved: people.length - saved.length,
+      rows: rows.map(r => ({ ...r, top: most >= 2 && !r.right && r.n === most })) };
+  }
+
+  // the takes on the map for this question, take 1 first, each with its students
+  const takeGroups = level => TAKES[level].map(set => ({ set, people: heatDone.filter(d => d.r.set === set) })).filter(g => g.people.length);
+
+  function groupHTML(level, i, g) {
+    const it = SETS[g.set][i];
+    const { saved, unsaved, rows } = pickCounts(it, g.people);
+    const tops = rows.filter(r => r.top);
+    const n = g.people.length;
+    const title = `${SET_NAMES[level]}${TAKES[level].length > 1 ? ` · take ${takeNo(g.set)}` : ''} · ${n} ${n === 1 ? 'student' : 'students'}`;
+    const rowHTML = r => `<li class="pk-row${r.right ? ' pk-right' : ''}${r.top ? ' pk-top' : ''}">
+        <div class="pk-label"><div class="pk-ans">${pickHTML(it, r.p)}</div>${r.right ? '<span class="pk-mark">✓ right</span>' : ''}${r.top ? `<em>${tops.length > 1 ? 'tied for most-picked wrong answer' : 'most-picked wrong answer'}</em>` : ''}${r.n ? `<span class="pk-who">${r.who.map(esc).join(', ')}</span>` : ''}</div>
+        <span class="pk-bar" aria-hidden="true"><i style="width:${saved ? Math.round((r.n / saved) * 100) : 0}%"></i></span><b class="pk-n">${r.n}</b></li>`;
+    return `<div class="pk-group" data-set="${g.set}">
+        <p class="pk-title">${title}</p>
+        <div class="t-qbox-q t-qbox-stem">${stemHTML(it)}</div>
+        <div class="t-qbox-a"><b>Right answer:</b> ${rightHTML(it)}</div>
+        ${rows.length ? `<ul class="pk-list">${rows.map(rowHTML).join('')}</ul>` : '<p class="t-msg pk-none">No answers saved for this question yet.</p>'}
+        ${unsaved ? `<p class="pk-unsaved">${unsaved} ${unsaved === 1 ? 'student' : 'students'} with no answer saved</p>` : ''}
+      </div>`;
+  }
+
+  // one student's answer: what they picked, right or wrong, the right answer, and what they saw after checking it
+  function studentHTML(i, d) {
+    const it = SETS[d.r.set][i];
+    const right = !d.missed.has(i + 1);
+    const p = pickOf(it, d);
+    const head = `<b>${esc(d.name)}</b> · ${esc(setLabel(d.r.set))} · ${right ? '✓ right' : '✗ missed'}`;
+    if (p == null) return `<div class="t-student"><p>${head} · no answer saved for this question.</p></div>`;
+    const why = whyOf(it, right, p);
+    const saw = right ? 'Correct!' : `Not quite. ${why ? mathHTML(why) : 'Then the right answer and how to solve it.'}`;
+    return `<div class="t-student ${right ? 'ok' : 'no'}"><p>${head}</p>
+      <div class="t-student-pick"><span class="t-tag">Picked:</span> ${pickHTML(it, p)}</div>
+      <div class="t-student-key"><span class="t-tag">Right answer:</span> ${rightHTML(it)}</div>
+      <div class="t-student-why"><b>What ${esc(d.name.split(' ')[0])} saw:</b> ${saw}</div></div>`;
+  }
+
+  // the box under the heat map for question i (0-based); si = a student's row when a ✓ / ✗ was tapped
+  function qBoxHTML(i, si) {
+    const s = heatStats[i];
+    return `<div class="t-qbox-head"><b>Question ${i + 1}</b><span class="kq-skill">${esc(SKILL_NAMES[s.it.skill])}</span>
+        <span class="t-pill ${heatClass(s.pct)}">${s.right} of ${heatDone.length} right · ${s.pct}%</span>
+        <button type="button" class="t-qbox-x" data-qclose aria-label="Close question ${i + 1}">✕</button></div>
+      ${si != null && heatDone[si] ? studentHTML(i, heatDone[si]) : ''}
+      <div class="t-picks"><h5>What students picked <span>(${modeText()})</span></h5>${takeGroups(heatSet).map(g => groupHTML(heatSet, i, g)).join('')}</div>`;
+  }
+
+  // Open the box for question i (and student si), or close it when that one is already open
+  function toggleQ(i, si) {
+    const box = $('#t-qbox');
+    if (!box || !heatStats[i]) return;
+    const who = si == null ? '' : String(si);
+    const same = !box.hidden && box.dataset.q === String(i) && (box.dataset.s || '') === who;
+    document.querySelectorAll('#t-heat .h-qbtn').forEach(b => {
+      const on = !same && !who && b.dataset.q === String(i);
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-expanded', String(on));
+    });
+    document.querySelectorAll('#t-heat .h-cell').forEach(b => {
+      const on = !same && Boolean(who) && b.dataset.q === String(i) && b.dataset.s === who;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-expanded', String(on));
+    });
+    if (same) { box.hidden = true; box.dataset.q = ''; box.dataset.s = ''; box.dataset.who = ''; return; }
+    box.innerHTML = qBoxHTML(i, si);
+    box.dataset.q = String(i);
+    box.dataset.s = who;
+    box.dataset.who = who ? heatDone[si].key : '';
+    box.hidden = false;
+  }
+  // which box is open: the question and, for a ✓ / ✗, that student (by name, so a redraw finds them again)
+  function openBox() {
+    const box = $('#t-qbox');
+    return box && !box.hidden ? { q: Number(box.dataset.q), who: box.dataset.who || '' } : null;
+  }
+
+  /* ------------------------------------------------------------ teacher: skill / standard heat map (11/18)
+     Under the question heat map: one row per student (the take shown), one column per skill, then per standard;
+     a cell = right out of that group's questions. The questions carry a skill, not a standard: the standards come
+     from the real test's blueprint (5.NF.A.1 + 5.NF.A.2; the tenths and hundredths questions add unlike
+     denominators, so 5.NF.1). Take 2 has the same skill in each spot. */
+  // What each standard is (Marcos 11/18: "do the standards say what they are" → "Yes, add them"): a short name in its
+  // column, and its official words (thecorestandards.org, read 11/18) under the map
+  const STD_INFO = {
+    '5.NF.1': ['Add and subtract fractions with unlike denominators', 'Add and subtract fractions with unlike denominators (including mixed numbers) by replacing given fractions with equivalent fractions in such a way as to produce an equivalent sum or difference of fractions with like denominators.'],
+    '5.NF.2': ['Fraction word problems', 'Solve word problems involving addition and subtraction of fractions referring to the same whole, including cases of unlike denominators, e.g., by using visual fraction models or equations to represent the problem.']
+  };
+  const SKILL_STD = { inverse: '5.NF.1', steps: '5.NF.1', tenths: '5.NF.1', unlike: '5.NF.1', expr: '5.NF.2', error: '5.NF.2', models: '5.NF.2' };
+  function skillHTML(level) {
+    const base = SETS[level];
+    const where = test => base.map((it, i) => (test(it) ? i + 1 : 0)).filter(Boolean);
+    const skills = [...new Set(base.map(it => it.skill))];
+    const stds = [...new Set(skills.map(k => SKILL_STD[k]))].sort();
+    const cols = [...skills.map(k => { const qs = where(it => it.skill === k); return { label: SKILL_NAMES[k], sub: `${SKILL_STD[k]} · Q${qs.join(', ')}`, qs }; }),
+      ...stds.map(std => ({ label: std, name: (STD_INFO[std] || [])[0] || '', words: (STD_INFO[std] || [])[1] || '', sub: 'all its questions', qs: where(it => SKILL_STD[it.skill] === std), std: true }))];
+    const score = (d, qs) => {
+      const right = qs.filter(q => !d.missed.has(q)).length;
+      return { right, of: qs.length, pct: Math.round((right / qs.length) * 100) };
+    };
+    const cell = ({ right, of, pct }) => `<td class="${heatClass(pct)}" title="${right} of ${of} right">${right}/${of}</td>`;
+    const body = heatDone.map(d => `<tr><th scope="row">${esc(d.name)}${takeNo(d.r.set) > 1 ? ' <span class="t-take">take 2</span>' : ''}</th>${cols.map(c => cell(score(d, c.qs))).join('')}</tr>`).join('');
+    const foot = cols.map(c => {
+      const right = heatDone.reduce((n, d) => n + score(d, c.qs).right, 0);
+      const pct = Math.round((right / (heatDone.length * c.qs.length)) * 100);
+      return `<td class="${heatClass(pct)}">${pct}</td>`;
+    }).join('');
+    return `<h3 class="t-sub">Skill and standard heat map <span>(${SET_NAMES[level]} · each student's ${modeText()} · right out of that group's questions)</span></h3>
+      <div class="t-wrap"><table class="t-heat t-skill"><thead><tr><th scope="col">Student</th>${cols.map(c => `<th scope="col" class="${c.std ? 'sk-std' : ''}"${c.words ? ` title="${esc(c.words)}"` : ''}>${esc(c.label)}${c.name ? `<span class="sk-name">${esc(c.name)}</span>` : ''}<span class="sk-sub">${esc(c.sub)}</span></th>`).join('')}</tr></thead>
+      <tbody>${body}</tbody><tfoot><tr><th scope="row">% right</th>${foot}</tr></tfoot></table></div>
+      <ul class="t-std-list">${stds.map(std => `<li><b>${esc(std)} · ${esc((STD_INFO[std] || [])[0] || '')}</b> <span class="t-std-words">${esc((STD_INFO[std] || [])[1] || '')}</span></li>`).join('')}</ul>
+      <p class="t-note">The questions name a skill, not a standard. The standards come from the real test's blueprint: 5.NF.1 = add and subtract with unlike denominators (the tenths and hundredths questions too); 5.NF.2 = word problems, models and finding the mistake.</p>`;
+  }
+
+  // keepBox: the box to open again after drawing (undefined = the one open now, when the set stays the same)
+  function showHeat(set, keepBox) {
+    const keep = keepBox !== undefined ? keepBox : (set === heatSet ? openBox() : null);
+    heatSet = set;
+    document.querySelectorAll('[data-heat]').forEach(t => t.classList.toggle('on', t.dataset.heat === set));
+    document.querySelectorAll('[data-mode]').forEach(t => t.classList.toggle('on', t.dataset.mode === heatMode));
+    $('#t-heat').innerHTML = heatHTML(set);
+    $('#t-skillmap').innerHTML = heatDone.length ? skillHTML(set) : '';
+    if (!keep || !heatStats[keep.q]) return;
+    const si = keep.who ? heatDone.findIndex(d => d.key === keep.who) : -1;
+    if (!keep.who) toggleQ(keep.q);
+    else if (si >= 0) toggleQ(keep.q, si);
+  }
+
+  /* ------------------------------------------------------------ teacher: Class Scores, updating by itself (11/18)
+     While Class Scores shows and the tab is visible, her sheet is asked again every 20 seconds and the screen is
+     drawn again with her open box, her set, her take and her scroll place kept. Any other screen stops it. */
+  const AUTO_MS = 20000;
+  let autoTimer = null;
+  let loadSeq = 0;
+  function autoRefresh() {
+    clearTimeout(autoTimer);
+    autoTimer = null;
+    if (!tPin || tSample || document.body.dataset.screen !== 'teacher') return;
+    autoTimer = setTimeout(async () => {
+      autoTimer = null;
+      if (!document.hidden) await loadClass(true);
+      autoRefresh();   // only while Class Scores still shows (leaving it already cleared this timer)
+    }, AUTO_MS);
+  }
+  function stampUpdated(problem) {
+    const el = $('#t-updated');
+    const time = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+    el.hidden = false;
+    el.classList.toggle('t-err', Boolean(problem));
+    el.textContent = problem ? `${problem} at ${time}. Trying again in ${AUTO_MS / 1000} seconds.`
+      : `Updated ${time} · updates by itself every ${AUTO_MS / 1000} seconds`;
+  }
+
+  // her sheet's rows, safe to draw: only this site's sets, the counts as numbers, the text as text (names are escaped where drawn)
+  const cleanRows = rows => (Array.isArray(rows) ? rows : [])
+    .filter(r => r && typeof r === 'object' && Object.prototype.hasOwnProperty.call(SETS, r.set))
+    .map(r => ({ ...r, name: String(r.name == null ? '' : r.name), status: String(r.status || ''), missed: String(r.missed == null ? '' : r.missed),
+      pts: Number(r.pts) || 0, tot: Number(r.tot) || 0, pct: Number(r.pct) || 0, answered: Number(r.answered) || 0 }));
+
+  // rows: her class's rows, already fetched with her PIN (the PIN screen); otherwise they are asked for here
+  async function showTeacher(rows) {
+    $('#t-title').textContent = `Class Scores · ${TEACHERS[tTeacher] || ''}`;
+    $('#t-sample').hidden = !tSample;
+    $('#t-refresh').hidden = tSample;
+    if (tSample) $('#t-updated').hidden = true;
+    show('teacher');
+    if (rows) { loadSeq += 1; drawClass(cleanRows(rows), null); return; }
+    await loadClass(false);
+  }
+
+  // quiet: drawn again in place (no "Loading…"; a problem shows on the Updated line, the screen stays)
+  async function loadClass(quiet) {
+    const body = $('#t-body');
+    if (tSample) { drawClass(cleanRows(sampleRows()), null); return; }
+    if (!Sheet.connected || !tPin) {
+      body.innerHTML = `<p class="t-msg">Class scores are not connected to the score sheet yet.</p>`;
+      return;
+    }
+    const seq = ++loadSeq;
+    if (!quiet) body.innerHTML = `<p class="t-msg">Loading class scores…</p>`;
+    let r;
+    try {
+      r = await Sheet.loadScores(tTeacher, tPin);
+    } catch (e) {
+      if (seq !== loadSeq) return;
+      if (quiet) stampUpdated("Couldn't reach the score sheet");
+      else body.innerHTML = `<p class="t-msg t-err">Couldn't reach the score sheet. Check the internet, then press Refresh.</p>`;
+      return;
+    }
+    if (seq !== loadSeq) return;   // a newer ask is on its way
+    if (!r || !r.ok) {
+      const said = r && r.error === 'Wrong PIN' ? 'The score sheet did not accept that PIN'
+        : r && r.error === 'Locked' ? 'Too many wrong PINs on this computer. Try again in 10 minutes'
+        : `The score sheet answered: ${String(r && r.error)}`;
+      if (quiet) stampUpdated(said);
+      else body.innerHTML = `<p class="t-msg t-err">${esc(said)}.</p>`;
+      return;
+    }
+    const keep = quiet ? { box: openBox(), y: window.scrollY } : null;
+    drawClass(cleanRows(r.rows), keep);
+  }
+
+  // her class on the screen: the scores, the heat maps, the fix-a-name list; keep = her open box and scroll place
+  function drawClass(rows, keep) {
+    const body = $('#t-body');
+    classList = groupStudents(rows);
+    fillFix();
+    if (!tSample) stampUpdated();
+    if (!classList.length) {
+      body.innerHTML = `<p class="t-msg">No finished sets yet. Scores show up here as soon as students finish a set.</p>`;
+      return;
+    }
+    body.innerHTML = classHTML(rows, classList);
+    // stay on the set she was looking at; otherwise the first set anyone has finished
+    const hasFinished = s => classList.some(st => st.sets[s] && st.sets[s].takes.length);
+    if (!hasFinished(heatSet)) heatSet = Object.keys(SET_NAMES).find(hasFinished) || heatSet;
+    showHeat(heatSet, keep ? keep.box : null);
+    if (keep && document.body.dataset.screen === 'teacher') window.scrollTo(0, keep.y);
+  }
+
+  /* ------------------------------------------------------------ teacher: fix a misspelled name (11/18)
+     A student who typed a name wrong shows up as a new student. She picks that name, types the right first and last
+     name (tidied as the sign-in tidies one, letters only), says OK, and the score sheet moves every row of that name in
+     HER class's tab (its script checks her PIN again). The panel is outside the part that is drawn again, so her typing
+     stays. Not in the sample data (nothing there is saved). */
+  const NAME_PART = /^\p{L}+(?:['’-]\p{L}+)*$/u;
+  const tidyTyped = v => String(v).trim().replace(/\s+/g, ' ');
+  function fillFix() {
+    const sel = $('#fix-from');
+    const names = classList.map(st => st.name);
+    const list = JSON.stringify(names);
+    if (sel.dataset.names !== list) {   // only when the class changed, so a list she has open is not closed under her
+      const keep = sel.value;
+      sel.innerHTML = names.map(n => `<option>${esc(n)}</option>`).join('');
+      if (names.includes(keep)) sel.value = keep;
+      sel.dataset.names = list;
+    }
+    $('#t-fix').hidden = tSample || !names.length;
+  }
+  const FIX_ERRORS = {
+    'Unknown action': "Your score sheet can't fix names yet. It needs an update first. Nothing was changed.",
+    'Wrong PIN': 'The score sheet did not accept your PIN. Nothing was changed.',
+    Locked: 'Too many wrong PINs on this computer. Try again in 10 minutes. Nothing was changed.',
+    'Bad name': 'The score sheet did not take that name. Use letters only: a first and a last name. Nothing was changed.'
+  };
+  async function fixName() {
+    const msg = text => { $('#fix-msg').textContent = text; };
+    const from = $('#fix-from').value;
+    const first = tidyTyped($('#fix-first').value), last = tidyTyped($('#fix-last').value);
+    if (!from) { msg('Pick the name to fix.'); return; }
+    if (!last || !first) { msg('Type the right first name and last name.'); return; }
+    if (![...first.split(' '), ...last.split(' ')].every(w => NAME_PART.test(w))) { msg('Use letters only in the name.'); return; }
+    const to = `${first} ${last}`.slice(0, 30).trim();   // her sheet keeps 30 letters of a name, as the sign-in does
+    if (normName(to) === normName(from)) { msg('That is the same name.'); return; }
+    if (!window.confirm(`Move all of ${from}'s work to ${to}?`)) { msg('Nothing was changed.'); return; }
+    msg('Moving…');
+    try {
+      const r = await Sheet.renameStudent(tTeacher, tPin, from, to);
+      if (!r || !r.ok) { msg(FIX_ERRORS[r && r.error] || `The score sheet answered: ${String(r && r.error)}. Nothing was changed.`); return; }
+      const moved = Number(r.moved) || 0;
+      msg(`Moved ${moved} ${moved === 1 ? 'row' : 'rows'} from ${from} to ${to}.`);
+      $('#fix-first').value = '';
+      $('#fix-last').value = '';
+      await loadClass(true);
+    } catch (e) {
+      msg("Couldn't reach the score sheet. Check the internet, then try again.");
+    }
+  }
+
+  /* ------------------------------------------------------------ home */
+  // Page 1: welcome. The name box always starts empty, so nobody starts as the last student.
+  function renderHome() {
+    $('#student-name').value = '';
+    $('#student-last').value = '';
+    $('#name-hint').hidden = true;
+    closeNameCheck();
+    chooseName = '';
+    chooseFirst = '';
+    chooseTeacher = '';
+    choosePlaces = {};
+    chooseDone = {};
+    lookupSeq += 1;
+    show('home');
+  }
+
+  /* Page 2: directions. Opening directions follow Marcos's standard: their own 🔊, and
+     "I'm ready" stays locked until they are heard to the end. Once a student has heard
+     them on this computer, they stay open there (the 🔊 is still there). */
+  const HEARD_KEY = 'g5FracFiab_heard_v1';   // who has heard them on this computer (teacher + name)
+  const DIRECTIONS = [
+    'Go in order. First the Warm Up. Then the Review. Then Test A. Then Test B.',
+    'Each one opens when you finish the one before it.',
+    'You get 2 takes of the Warm Up and the Review. Take 2 has new numbers. You get 1 take of each test.',
+    'For each question, pick an answer or type a fraction. Then press Check Answer.',
+    'Read why your answer is right or wrong. Then press Next.',
+    'Press 🔊 to hear a question or an answer read to you.',
+    'Your work saves after every question. You can stop and keep going later, on any computer.'
+  ];
+  const DIR_ICONS = ['🪜', '🔓', '🔁', '✏️', '💡', '👂', '💻'];
+  const DIR_DONE = "When you are done listening, press I'm ready.";
+  const setReady = open => {
+    $('#dir-go').setAttribute('aria-disabled', String(!open));
+    if (open) $('#dir-note').hidden = true;
+  };
+
+  // Each step is a card: number, picture, words. Key words get the look of what they name
+  // (each level in its card's color, a button as a small button); the words said stay the same.
+  const DIR_KEYS = [
+    ['Warm Up', 'k-W'], ['Review', 'k-R'], ['Test A', 'k-TA'], ['Test B', 'k-TB'],
+    ['Check Answer', 'k-btn'], ['Next', 'k-btn'], ['2 takes', 'k-em'], ['1 take', 'k-em'], ['new numbers', 'k-em'], ['any computer', 'k-em']
+  ];
+  const dirStepHTML = (d, i) => `<li class="dir-step"><span class="dir-num" aria-hidden="true">${i + 1}</span>` +
+    `<span class="dir-icon" aria-hidden="true">${DIR_ICONS[i]}</span><span class="dir-text">${sayHTML(d)}</span></li>`;
+  function markKeys(box) {
+    const words = [...box.querySelectorAll('.w')];
+    const bare = w => (w.dataset.say || '').replace(/[.,]$/, '');
+    for (let i = 0; i < words.length; i += 1) {
+      const hit = DIR_KEYS.find(([k]) => k.split(' ').every((part, j) => words[i + j] && bare(words[i + j]) === part));
+      if (!hit) continue;
+      const last = words[i + hit[0].split(' ').length - 1];
+      const range = document.createRange();
+      range.setStartBefore(words[i]);
+      range.setEndAfter(last);
+      const key = document.createElement('b');
+      key.className = `key ${hit[1]}`;
+      range.surroundContents(key);
+      // a period after a key word sits outside its color (it is still said: data-say keeps it)
+      const end = last.textContent.match(/[.,]$/);
+      if (end) { last.textContent = last.textContent.slice(0, -1); key.after(end[0]); }
+      i = words.indexOf(last);
+    }
+  }
+
+  function renderDirections(name) {
+    chooseName = name;
+    $('#dir-steps').innerHTML = DIRECTIONS.map(dirStepHTML).join('');
+    document.querySelectorAll('#dir-steps .dir-text').forEach(markKeys);
+    setReady(Boolean(store.get(HEARD_KEY, {})[who(chooseTeacher, name)]));
+    $('#dir-note').hidden = true;
+    show('directions');
+  }
+
+  function hearDirections() {
+    // each step is its own line, and its words light up as they are said
+    const lines = [{ text: 'Directions.' }, ...[...document.querySelectorAll('#dir-steps li')].map(spokenOf), { text: DIR_DONE }];
+    const heard = () => {
+      store.set(HEARD_KEY, { ...store.get(HEARD_KEY, {}), [who(chooseTeacher, chooseName)]: true });
+      setReady(true);
+    };
+    const run = readLines(lines, $('#dir-head'), heard);
+    if (run === false) {
+      // this computer cannot read aloud: give time to read, then open
+      $('#dir-note').textContent = "This computer can't read aloud. Read the directions, then press I'm ready.";
+      $('#dir-note').hidden = false;
+      setTimeout(() => { if (document.body.dataset.screen === 'directions') setReady(true); }, 15000);
+      return;
+    }
+    // if the voice hangs (no end ever comes), don't leave the student stuck: open well after
+    // the reading should have finished, as long as it wasn't stopped or restarted
+    const chars = lines.map(l => l.text).join(' ').length;
+    setTimeout(() => {
+      if (!run.stopped && speaking === run && document.body.dataset.screen === 'directions') {
+        setReady(true);
+        $('#dir-note').textContent = "If you couldn't hear it, read the directions above.";
+        $('#dir-note').hidden = false;
+      }
+    }, chars * 90 + lines.length * 900 + 15000);
+  }
+
+  // Page 3: hello + where to start, with this student's saved place and finished sets
+  // (this device first, then the teacher's tab of the score sheet, so it all follows them to any Chromebook)
+  let lookupSeq = 0;
+  function renderChoose(name) {
+    chooseName = name;
+    $('#hello').textContent = `Hi, ${chooseFirst || name.split(' ')[0]}!`;
+    $('#choose-class').textContent = GUEST ? '👀 Guest view · every set is open · nothing is saved' : `${TEACHERS[chooseTeacher]}'s class`;
+    choosePlaces = localPlaces(chooseTeacher, name);
+    chooseDone = localDone(chooseTeacher, name);
+    looking = Sheet.connected && !GUEST;   // a guest's work is never looked up on the score sheet
+    drawChoose();
+    show('choose');
+    if (!looking) return;
+    const seq = ++lookupSeq;
+    const teacher = chooseTeacher;
+    Sheet.loadPlaces(name, teacher).then(r => {
+      if (seq !== lookupSeq || !r || !r.ok) return;
+      r.places.map(p => placeFromSheet(p, teacher)).filter(Boolean).forEach(st => {
+        const here = choosePlaces[levelOf(st.set)];
+        if (!here || st.idx > here.idx) choosePlaces[levelOf(st.set)] = st;  // whichever got further
+      });
+      // finished takes per set → per level (an older script sent just a best score)
+      const fromSheet = {};
+      Object.entries(r.finished || {}).forEach(([set, v]) => {
+        if (!SETS[set]) return;
+        const d = typeof v === 'number' ? { best: v, tries: 1 } : v;
+        const agg = fromSheet[levelOf(set)] || (fromSheet[levelOf(set)] = { best: 0, tries: 0 });
+        agg.best = Math.max(agg.best, Number(d.best) || 0);
+        agg.tries += Number(d.tries) || 0;
+      });
+      Object.entries(fromSheet).forEach(([l, d]) => {
+        const here = chooseDone[l] || { best: 0, tries: 0 };
+        chooseDone[l] = { best: Math.max(here.best, d.best), tries: Math.max(here.tries, d.tries) };
+      });
+    }).catch(() => { /* offline: this device's work only */ }).finally(() => {
+      if (seq !== lookupSeq) return;
+      looking = false;
+      drawChoose();
+    });
+  }
+
+  function drawChoose() {
+    $('#looking').hidden = !looking;
+    document.querySelectorAll('#choose .set-btn').forEach(b => {
+      const set = b.dataset.set;
+      const open = isOpen(set);
+      b.disabled = looking;   // a locked set stays tappable: the teacher's PIN can let this student start it now
+      b.classList.toggle('locked', !open);
+      const prev = ORDER[ORDER.indexOf(set) - 1];
+      const place = choosePlaces[set], done = chooseDone[set];
+      const text = place ? `▶ Keep going${takeNo(place.set) > 1 ? ' (take 2)' : ''}: question ${place.idx + 1}`
+        : !open ? `🔒 Finish ${SET_NAMES[prev]} first`
+        : !done ? ''
+        : done.tries < TAKES[set].length ? `✓ Take 1: ${done.best}% · take 2 is open`
+        : `✓ Done · best ${done.best}%`;
+      let badge = b.querySelector('.place-badge');
+      if (text && !badge) {
+        badge = document.createElement('b');
+        badge.className = 'place-badge';
+        b.appendChild(badge);
+      }
+      if (text) badge.textContent = text;
+      else if (badge) badge.remove();
+    });
+    const top = Object.values(choosePlaces).sort((x, y) => (y.updated || 0) - (x.updated || 0))[0];
+    $('#resume').hidden = !top;
+    document.querySelectorAll('#resume button').forEach(btn => { btn.disabled = looking; });
+    if (top) {
+      $('#resume-text').textContent = `You started ${setLabel(top.set)}. You are on question ${top.idx + 1} of ${SETS[top.set].length}.`;
+      $('#resume').dataset.set = levelOf(top.set);
+    }
+  }
+
+  // Saved scores on this computer: this class's only (the class link it was opened with)
+  function openScores() {
+    const scores = store.get(SCORES_KEY, []).filter(s => s.teacher === CLASS).reverse();
+    $('#score-list').innerHTML = scores.length ? scores.map(s => {
+      const badge = s.grade.startsWith('A') ? 'badge-A' : s.grade.startsWith('B') ? 'badge-B' : s.grade.startsWith('C') ? 'badge-C' : 'badge-D';
+      return `<div class="score-item"><div class="score-details"><span class="score-name">${esc(s.name)} · ${SETS[s.set] ? setLabel(s.set) : esc(s.set)}</span>
+        <span class="score-date">${esc(s.date)}</span><span class="score-pts">${s.pts} / ${s.tot} points</span></div>
+        <div class="score-badge ${badge}">${s.pct}% | ${esc(s.grade)}</div></div>`;
+    }).join('') : `<div class="empty-scores">No scores saved yet. Finish a set to see your score here!</div>`;
+    $('#score-modal').hidden = false;
+  }
+
+  // The whole question as students see it, every choice (the right one in green, each wrong one with the mistake it shows)
+  function keyItemHTML(it, i) {
+    const answer = it.type === 'mc'
+      ? `<div class="kq-choices">${it.choices.map((ch, c) => `<div class="kq-choice${c === it.answer ? ' right' : ''}">
+          <span class="letter">${'ABCD'[c]}</span>
+          <div class="kq-body">${linesHTML(ch.t)}${c === it.answer
+            ? '<div class="kq-note ok">✓ Correct answer</div>'
+            : (ch.why ? `<div class="kq-note"><b>Why it's wrong:</b> ${mathHTML(ch.why)}</div>` : '')}</div>
+        </div>`).join('')}</div>`
+      : `<div class="kq-entry"><span class="kq-entry-label">Answer</span> ${mathHTML(keyText(it))} <span class="key-note">(any equal fraction counts)</span></div>
+        ${(it.traps || []).map(t => `<div class="kq-note"><b>Common wrong answer</b> ${mathHTML(`{${t.v}}`)}: ${mathHTML(t.why)}</div>`).join('')}`;
+    return `<article class="kq">
+      <header class="kq-head"><span class="item-num">${i + 1}</span><span class="kq-skill">${esc(SKILL_NAMES[it.skill])}</span>
+        <span class="kq-type">${it.type === 'mc' ? 'Multiple choice' : 'Type-in fraction'}</span></header>
+      <div class="stem">${it.parts.map(partHTML).join('')}${it.ask ? `<p class="ask">${mathHTML(it.ask)}</p>` : ''}</div>
+      ${it.hint ? `<div class="kq-reminder"><span aria-hidden="true">💡</span> <b>Reminder students hear:</b> ${mathHTML(it.hint)}</div>` : ''}
+      ${answer}
+      <div class="kq-explain"><b>How to solve it:</b> ${mathHTML(it.explain)}</div>
+    </article>`;
+  }
+
+  function renderKey(set) {
+    document.querySelectorAll('.key-tab').forEach(t => t.classList.toggle('on', t.dataset.set === set));
+    // the printed key's title (Marcos 11/3: titles on the printed versions, like Dollars and Sense): Print
+    // hides the tabs, so the paper says which set it is
+    const n = SETS[set].length, mc = SETS[set].filter(it => it.type === 'mc').length;
+    $('#key-print-head').innerHTML = `<h1>SBAC Practice: Add &amp; Subtract with Equivalent Fractions — ${esc(setLabel(set))} Answer Key</h1>` +
+      `<p>Grade 5 · FIAB Practice · ${n} questions: ${mc} multiple choice, ${n - mc} type-in · the right answer is marked ✓</p>`;
+    $('#key-body').innerHTML = SETS[set].map(keyItemHTML).join('');
+  }
+
+  /* ------------------------------------------------------------ teacher: try it as a student
+     Any set, any question, nothing locked: what a student sees and hears, but no row goes to
+     her sheet and no place or score is kept on this computer (Marcos 11/2: "teacher mode where
+     she can go through it like a student"). Her bar at the bottom moves around the set. */
+  let preview = false;
+  function tryAsStudent(set) {
+    preview = true;
+    state = { name: 'Teacher preview', teacher: tTeacher, set, idx: 0, results: {}, started: Date.now(), saveId: null };
+    $('#tb-jump').innerHTML = SETS[set].map((it, i) => `<option value="${i}">Question ${i + 1}</option>`).join('');
+    renderItem();
+  }
+  function syncTeachBar() {
+    $('#teach-bar').hidden = !preview;
+    document.body.classList.toggle('previewing', preview);
+    if (!preview) return;
+    $('#tb-jump').value = String(state.idx);
+    $('#tb-prev').disabled = state.idx === 0;
+    $('#tb-next').disabled = state.idx + 1 >= SETS[state.set].length;
+  }
+  function previewGo(i) {
+    if (!preview || !state || i < 0 || i >= SETS[state.set].length) return;
+    state.idx = i;
+    renderItem();
+  }
+  function leavePreview() {
+    preview = false;
+    state = null;
+    syncTeachBar();
+    show('teacher');
+  }
+
+  /* ------------------------------------------------------------ teacher: Slide Mode
+     Worked examples only (data/slides.js), never a question students are scored on (his
+     standard 10/30). Big, for her desk or the board. The steps come one at a time, the answer
+     last; ▶ / PageDown / → show the next step, then the next slide; ◀ / PageUp / ← go back. */
+  const SLIDES = window.SLIDES || [];
+  let slideAt = 0;
+  let stepsShown = 0;   // steps showing on this slide; one more than the steps = the answer too
+  function openSlides() {
+    $('#sl-jump').innerHTML = SLIDES.map((sl, i) => `<option value="${i}">${i + 1}. ${esc(sl.title)}</option>`).join('');
+    show('slides');
+    goSlide(0);
+  }
+  function goSlide(i) {
+    if (i < 0 || i >= SLIDES.length) return;
+    slideAt = i;
+    stepsShown = 0;
+    const sl = SLIDES[i];
+    // the problem on the left stays in view while the steps fill in on the right
+    $('#sl-body').innerHTML = `
+      <div class="sl-left">
+        <div class="sl-skill">${esc(SKILL_NAMES[sl.skill])}</div>
+        <h2 class="sl-title">${esc(sl.title)}</h2>
+        <div class="sl-problem stem">${sl.problem.map(partHTML).join('')}</div>
+      </div>
+      <div class="sl-right">
+        <ol class="sl-steps">${sl.steps.map(st => `<li hidden><span>${mathHTML(st)}</span></li>`).join('')}</ol>
+        <div class="sl-answer" hidden><span aria-hidden="true">✅</span> <span>${mathHTML(sl.answer)}</span></div>
+      </div>`;
+    $('#sl-count').textContent = `Slide ${i + 1} of ${SLIDES.length}`;
+    $('#sl-jump').value = String(i);
+    $('#sl-prev').disabled = i === 0;
+    $('#sl-next').disabled = i + 1 >= SLIDES.length;
+    window.scrollTo(0, 0);
+    syncSlide();
+  }
+  function syncSlide() {
+    const sl = SLIDES[slideAt];
+    const steps = [...document.querySelectorAll('#sl-body .sl-steps li')];
+    steps.forEach((li, k) => { li.hidden = k >= stepsShown; });
+    const answer = $('#sl-body .sl-answer');
+    answer.hidden = stepsShown <= steps.length;
+    const btn = $('#sl-step');
+    const last = slideAt + 1 >= SLIDES.length;
+    btn.textContent = stepsShown < steps.length ? `Show step ${stepsShown + 1} ▶`
+      : stepsShown === steps.length ? 'Show the answer ▶' : (last ? '🏁 Last slide' : 'Next slide ▶');
+    btn.disabled = stepsShown > sl.steps.length && last;
+    const newest = stepsShown > steps.length ? answer : steps[stepsShown - 1];
+    if (newest) newest.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  function slideForward() {
+    if (stepsShown <= SLIDES[slideAt].steps.length) { stepsShown += 1; syncSlide(); }
+    else goSlide(slideAt + 1);
+  }
+
+  /* ------------------------------------------------------------ teacher: the PIN screen (Teacher Access)
+     Her class (a class link shows only that class, already picked), then her PIN. The score sheet's script checks the
+     PIN and sends back only that class's rows; 5 wrong PINs in 10 minutes lock this computer out (counted there). */
+  function pickClass(code) {
+    tTeacher = code;
+    document.querySelectorAll('.tpin-class').forEach(b => {
+      const on = b.dataset.teacher === code;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', String(on));
+    });
+  }
+  function pinNote(text) {
+    $('#tpin-note').textContent = text;
+    $('#tpin-note').hidden = !text;
+  }
+  if (CLASS) document.querySelectorAll('.tpin-class').forEach(b => { b.hidden = b.dataset.teacher !== CLASS; });
+  function openPin() {
+    tPin = null;
+    tSample = false;
+    pickClass(CLASS || '');
+    $('#tpin-input').value = '';
+    pinNote('');
+    $('#tpin-sample').hidden = Sheet.connected;
+    show('tpin');
+  }
+  async function openClassScores() {
+    if (!tTeacher) { pinNote('Pick your class first.'); return; }
+    if (!Sheet.connected) { pinNote("No score sheet is connected yet, so a PIN can't be checked. Press See sample data."); return; }
+    const pin = $('#tpin-input').value.trim();
+    if (!pin) { pinNote('Type your PIN.'); return; }
+    pinNote('Checking…');
+    let r;
+    try {
+      r = await Sheet.loadScores(tTeacher, pin);
+    } catch (e) {
+      pinNote("Couldn't reach the score sheet. Check the internet, then try again.");
+      return;
+    }
+    if (!r || !r.ok) { pinNote(PIN_SAYS[r && r.error] || `The score sheet answered: ${String(r && r.error)}`); return; }
+    tPin = pin;
+    tSample = false;
+    $('#tpin-input').value = '';
+    pinNote('');
+    showTeacher(r.rows);
+  }
+
+  /* ------------------------------------------------------------ teacher: sample data (preview only)
+     Invented students, every one named "… Sample", made up the same way each time from the questions themselves, so
+     the teacher screen can be seen before a score sheet is connected. Nothing here comes from, or goes to, a real class. */
+  function sampleRows() {
+    const plan = [
+      ['Ava Sample', 0.95, ['W', 'W2', 'R', 'R2', 'TA', 'TB']],
+      ['Ben Sample', 0.88, ['W', 'W2', 'R', 'R2', 'TA', 'TB']],
+      ['Cora Sample', 0.8, ['W', 'W2', 'R', 'R2', 'TA']],
+      ['Dev Sample', 0.72, ['W', 'W2', 'R', 'TA']],
+      ['Eli Sample', 0.64, ['W', 'W2', 'R', 'TA:7']],
+      ['Fay Sample', 0.56, ['W', 'R']],
+      ['Gus Sample', 0.48, ['W', 'W2', 'R:4']],
+      ['Hana Sample', 0.4, ['W', 'W2']],
+      // a teacher let these take a set again (1st take → latest take)
+      ['Dev Sample', 0.9, ['W']],
+      ['Gus Sample', 0.25, ['W']],
+      ['Fay Sample', 0.75, ['R']]
+    ];
+    const TOOK = [14, 22, 9, 31, 18, 0.5, 26, 12, 85, 7, 41];   // minutes each sample take took (85: stopped and came back)
+    const harder = { W: 0, W2: 0.02, R: 0.08, R2: 0.1, TA: 0.16, TB: 0.16 };
+    const spot = [0, 0.1, 0.04, 0, 0.14, 0.12, 0.16, 0.06, 0.22, 0.04, 0, 0.2, 0.04, 0.18, 0.08];   // one per question
+    let seed = 20261119;
+    const rnd = () => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed / 4294967296; };
+    const oneOf = list => list[Math.floor(rnd() * list.length)];
+    // a wrong answer, not always the same one (so "what students picked" has something to count): another choice, or a
+    // typed answer that is one of the question's common mistakes (or one more on top)
+    const wrongPick = it => {
+      if (it.type === 'mc') return oneOf(it.choices.map((c, i) => i).filter(i => i !== it.answer));
+      const traps = (it.traps || []).map(t => t.v);
+      if (traps.length && rnd() < 0.8) return oneOf(traps);
+      const [n, d] = parseFrac(it.key);
+      return `${n + 1}/${d}`;
+    };
+    const start = Date.now() - 4 * 864e5;
+    let tick = 0;
+    const rows = [];
+    plan.forEach(([name, skill, sets]) => sets.forEach(entry => {
+      const [set, upTo] = entry.split(':');
+      const items = SETS[set];
+      const answered = upTo ? Number(upTo) : items.length;
+      const answers = {};
+      const missed = [];
+      items.slice(0, answered).forEach((it, i) => {
+        const ok = rnd() < skill - harder[set] - spot[i];
+        answers[it.id] = [ok ? 1 : 0, ok ? (it.type === 'mc' ? it.answer : it.key) : wrongPick(it)];
+        if (!ok) missed.push(it.id);
+      });
+      const pts = answered - missed.length;
+      const finished = answered === items.length;
+      const pct = Math.round((pts / (finished ? items.length : answered)) * 100);
+      tick += 1;
+      const at = new Date(start + tick * 37 * 60000 + (finished ? 0 : 3 * 864e5)).toISOString();
+      rows.push({
+        savedAt: at, saveId: `S-sample-${rows.length + 1}`, name, set, pts, tot: items.length, pct,
+        grade: finished ? gradeFor(pct).l : '', missed: missed.join(', '), finishedAt: finished ? at : '',
+        status: finished ? 'Finished' : 'In progress', answered, answers: JSON.stringify(answers),
+        startedAt: new Date(Date.parse(at) - TOOK[tick % TOOK.length] * 60000).toISOString(), updatedAt: at
+      });
+    }));
+    // one started over (with the teacher's PIN): the scores show "↺ 1 restart"
+    rows.push({ savedAt: new Date(start).toISOString(), saveId: 'S-sample-restart', name: 'Eli Sample', set: 'R', pts: 2, tot: 15, pct: 67,
+      grade: '', missed: '', finishedAt: '', status: 'Restarted', answered: 3, answers: '{}', startedAt: new Date(start).toISOString(),
+      updatedAt: new Date(start + 60000).toISOString() });
+    return rows;
+  }
+
+  /* ------------------------------------------------------------ wiring */
+  document.querySelectorAll('.set-btn').forEach(b => b.addEventListener('click', () => startSet(b.dataset.set)));
+  // First and last name (Marcos 11/2). A missing one gets a note that is read to them right away.
+  const NAME_HINTS = { both: 'Type your first and last name.', first: 'Type your first name.', last: 'Type your last name.' };
+  function nameHint(which) {
+    const box = $('#name-hint');
+    $('#name-hint-words').innerHTML = sayHTML(NAME_HINTS[which]);
+    box.hidden = false;
+    const { text, marks } = spokenOf(box);
+    readAloud(text, box, null, marks);
+  }
+  const typed = id => $(id).value.trim().replace(/\s+/g, ' ');
+  /* The class link (as on the Grade 5 Inferences site): the cover shows only that teacher's name. Opened with no class
+     link (or one this site does not know) it shows only "Ask your teacher for your class link." (read aloud with its
+     own 🔊): no name boxes, no Start, no saved scores. Teacher Access stays, small, for the teachers. */
+  const NO_LINK = 'Ask your teacher for your class link.';
+  $('#home-nolink-words').innerHTML = sayHTML(NO_LINK);
+  $('#home-class').textContent = CLASS ? `${TEACHERS[CLASS]}'s class` : '';
+  ['#home-class', '#home-lead', '.name-row', '#start-btn', '#scores-btn', '#scores-dot'].forEach(sel => { $(sel).hidden = !CLASS; });
+  $('#home-nolink').hidden = Boolean(CLASS);
+  // a guest: no name boxes, no "ask for your class link", no saved scores, no Teacher Access (no PIN in a guest view);
+  // one start button (share.js names it), or the two guest cards on the teacher/admin link
+  const START_SHOWN = Boolean(CLASS) || GUEST;
+  if (GUEST) {
+    ['#home-lead', '.name-row', '#home-nolink', '#scores-btn', '#scores-dot', '#teacher-link'].forEach(sel => { $(sel).hidden = true; });
+    $('#start-btn').hidden = false;
+  }
+  $('#preview-banner').hidden = Sheet.connected;   // no score sheet yet: "Preview — nothing is saved"
+  /* Is this your name? (as on the Grade 5 Inferences site: a name typed one letter off made a NEW student, who started
+     over). After Start the typed name shows big and the question is read aloud (never the name: no recording holds a
+     student's name). Yes goes on to the directions; No goes back to the two boxes, with nothing started. */
+  const NAME_CHECK = 'Is this your name?';
+  $('#name-check-words').innerHTML = sayHTML(NAME_CHECK);
+  function closeNameCheck() {
+    $('#name-check').hidden = true;
+    $('#start-btn').hidden = !START_SHOWN;
+  }
+  ['#student-name', '#student-last'].forEach(id => $(id).addEventListener('input', () => { $('#name-hint').hidden = true; closeNameCheck(); }));
+  const goDirections = () => {
+    if (!CLASS) return;
+    const first = typed('#student-name'), last = typed('#student-last');
+    if (!first || !last) {
+      nameHint(!first && !last ? 'both' : !first ? 'first' : 'last');
+      $(!first ? '#student-name' : '#student-last').focus();
+      return;
+    }
+    $('#name-check-name').textContent = `${first} ${last}`;
+    $('#name-check').hidden = false;
+    $('#start-btn').hidden = true;
+    const ask = $('#name-check-ask');
+    const { text, marks } = spokenOf(ask);
+    readAloud(text, ask, null, marks);
+    $('#name-yes').focus();
+  };
+  function nameYes() {
+    const first = typed('#student-name'), last = typed('#student-last');
+    if (!first || !last || !CLASS) { closeNameCheck(); return; }
+    closeNameCheck();
+    chooseFirst = first;
+    chooseTeacher = CLASS;
+    renderDirections(`${first} ${last}`.slice(0, 30).trim());   // the sheet keeps 30 letters of a name: the same 30 find their saved work
+  }
+  // a guest goes straight to the directions as "Guest", in the class of the link (or the first class)
+  function guestStart() {
+    chooseFirst = GUEST_NAME;
+    chooseTeacher = CLASS || Object.keys(TEACHERS)[0];
+    renderDirections(GUEST_NAME);
+  }
+  $('#start-btn').addEventListener('click', () => (GUEST ? guestStart() : goDirections()));
+  $('#name-yes').addEventListener('click', nameYes);
+  $('#name-no').addEventListener('click', () => { closeNameCheck(); stopReading(); $('#student-name').focus(); $('#student-name').select(); });
+  $('#nolink-say').addEventListener('click', () => {
+    const { text, marks } = spokenOf($('#home-nolink'));
+    readAloud(text, $('#home-nolink'), null, marks);
+  });
+  $('#student-name').addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    if (typed('#student-last')) goDirections(); else $('#student-last').focus();
+  });
+  $('#student-last').addEventListener('keydown', e => { if (e.key === 'Enter') goDirections(); });
+  $('#dir-say').addEventListener('click', hearDirections);
+  $('#dir-go').addEventListener('click', () => {
+    if ($('#dir-go').getAttribute('aria-disabled') === 'true') {
+      $('#dir-note').textContent = 'Tap 🔊 to hear the directions first.';
+      $('#dir-note').hidden = false;
+      return;
+    }
+    renderChoose(chooseName);
+  });
+  $('#dir-back').addEventListener('click', e => { e.preventDefault(); renderHome(); });
+  $('#change-name').addEventListener('click', e => { e.preventDefault(); renderHome(); });
+  $('#resume-go').addEventListener('click', () => startSet($('#resume').dataset.set));
+  $('#resume-new').addEventListener('click', () => startOver($('#resume').dataset.set));
+  // Exit goes back to the welcome page, so the next student never lands on this one's page
+  $('#exit-btn').addEventListener('click', () => { if (preview) { leavePreview(); return; } state = null; renderHome(); });
+  $('#home-btn').addEventListener('click', () => (preview ? leavePreview() : chooseName ? renderChoose(chooseName) : renderHome()));
+  $('#scores-btn').addEventListener('click', openScores);
+  $('#close-scores').addEventListener('click', () => { $('#score-modal').hidden = true; });
+  $('#score-modal').addEventListener('click', e => { if (e.target.id === 'score-modal') $('#score-modal').hidden = true; });
+  // this class's saved scores on this computer only, with the class teacher's PIN (checked by the score sheet)
+  $('#clear-scores').addEventListener('click', async () => {
+    if (!CLASS || !(await teacherSays('clear all saved scores', CLASS))) return;
+    store.set(SCORES_KEY, store.get(SCORES_KEY, []).filter(sc => sc.teacher !== CLASS));
+    openScores();
+  });
+  $('#teacher-link').addEventListener('click', e => { e.preventDefault(); openPin(); });
+  document.querySelectorAll('.tpin-class').forEach(b => b.addEventListener('click', () => { pickClass(b.dataset.teacher); pinNote(''); }));
+  $('#tpin-go').addEventListener('click', openClassScores);
+  $('#tpin-input').addEventListener('keydown', e => { if (e.key === 'Enter') openClassScores(); });
+  $('#tpin-sample-go').addEventListener('click', () => {
+    if (Sheet.connected) return;
+    if (!tTeacher) pickClass(CLASS || 'pudill');
+    tSample = true;
+    tPin = null;
+    showTeacher();
+  });
+  $('#tpin-back').addEventListener('click', e => { e.preventDefault(); renderHome(); });
+  /* Guest view (11/19, share.js): the teacher/admin guest link opens Class Scores with no PIN, on the sample students
+     (invented, labeled "Sample data"), never a real class: real rows come only from the score sheet, with the PIN. */
+  if (window.SHARE_TEACHER) {
+    window.SHARE_OPEN_TEACHER = () => {
+      pickClass(CLASS || Object.keys(TEACHERS)[0]);
+      tSample = true;
+      tPin = null;
+      showTeacher();
+    };
+  }
+  $('#t-refresh').addEventListener('click', () => showTeacher());
+  $('#t-body').addEventListener('click', e => {
+    const t = e.target.closest('[data-heat]');
+    if (t) { showHeat(t.dataset.heat); return; }
+    const m = e.target.closest('[data-mode]');
+    if (m) { heatMode = m.dataset.mode; showHeat(heatSet); return; }
+    if (e.target.closest('[data-qclose]')) {
+      const box = $('#t-qbox');
+      toggleQ(Number(box.dataset.q), box.dataset.s ? Number(box.dataset.s) : undefined);
+      return;
+    }
+    const c = e.target.closest('.h-cell');
+    if (c) { toggleQ(Number(c.dataset.q), Number(c.dataset.s)); return; }
+    const q = e.target.closest('.h-qbtn');
+    if (q) toggleQ(Number(q.dataset.q));
+  });
+  $('#fix-go').addEventListener('click', fixName);
+  $('#t-key').addEventListener('click', () => { renderKey('W'); show('key'); });
+  // Back: her PIN is dropped, and the next class starts clean
+  $('#t-home').addEventListener('click', () => {
+    tPin = null;
+    tTeacher = '';
+    tSample = false;
+    classList = [];
+    ['#fix-first', '#fix-last'].forEach(sel => { $(sel).value = ''; });
+    $('#fix-msg').textContent = '';
+    $('#t-updated').hidden = true;
+    renderHome();
+  });
+  document.querySelectorAll('.key-tab').forEach(t => t.addEventListener('click', () => renderKey(t.dataset.set)));
+  $('#key-print').addEventListener('click', () => window.print());
+  $('#key-home').addEventListener('click', () => show('teacher'));
+  $('#t-try').addEventListener('click', () => show('try'));
+  document.querySelectorAll('.try-btn').forEach(b => b.addEventListener('click', () => tryAsStudent(b.dataset.set)));
+  $('#try-back').addEventListener('click', e => { e.preventDefault(); show('teacher'); });
+  $('#tb-prev').addEventListener('click', () => previewGo(state.idx - 1));
+  $('#tb-next').addEventListener('click', () => previewGo(state.idx + 1));
+  $('#tb-jump').addEventListener('change', e => { previewGo(Number(e.target.value)); e.target.blur(); });
+  $('#tb-back').addEventListener('click', leavePreview);
+  $('#t-slides').addEventListener('click', openSlides);
+  $('#sl-step').addEventListener('click', slideForward);
+  $('#sl-prev').addEventListener('click', () => goSlide(slideAt - 1));
+  $('#sl-next').addEventListener('click', () => goSlide(slideAt + 1));
+  $('#sl-jump').addEventListener('change', e => { goSlide(Number(e.target.value)); e.target.blur(); });
+  $('#sl-back').addEventListener('click', () => show('teacher'));
+  // a slide clicker or the keyboard: forward shows the next step, then the next slide
+  document.addEventListener('keydown', e => {
+    if (document.body.dataset.screen !== 'slides' || e.target.closest('select')) return;
+    if (['ArrowRight', 'PageDown'].includes(e.key) || (e.key === ' ' && !e.target.closest('button'))) { e.preventDefault(); slideForward(); }
+    else if (['ArrowLeft', 'PageUp'].includes(e.key)) { e.preventDefault(); goSlide(slideAt - 1); }
+  });
+  // Page read-alouds hold no student's name, so every line can have a Kokoro recording
+  // the cover's one line, said word for word as it is shown, each word lighting up (Marcos 11/2: the cover "too busy")
+  const homeLeadHTML = () => sayHTML('Type your first and last name. Then press Start.');
+  $('#home-lead-words').innerHTML = homeLeadHTML();
+  const CHOOSE_SAY = 'Go in order. Start with the Warm Up. Then do the Review. Then Test A, then Test B. They are just like the real test. Each one opens when you finish the one before it. You get 2 takes of the Warm Up and the Review, and 1 take of each test.';
+  const resumeSay = (set, n) => `You started ${setLabel(set)}. You are on question ${n} of ${SETS[set].length}. Press Keep going.`;
+  $('#home-say').addEventListener('click', () => {
+    const { text, marks } = spokenOf($('#home-lead'));
+    readAloud(text, $('#home-lead'), null, marks);
+  });
+  $('#choose-say').addEventListener('click', () => {
+    const top = $('#resume').hidden ? null : Object.values(choosePlaces).find(st => levelOf(st.set) === $('#resume').dataset.set);
+    readAloud(top ? `${CHOOSE_SAY} ${resumeSay(top.set, top.idx + 1)}` : CHOOSE_SAY, $('#choose-say'));
+  });
+
+  // Every line this site can say, built by the same code that draws the screens: the list the
+  // Kokoro recordings are made from, and what the tests check has a recording
+  window.__g5FracSpeech = {
+    lines() {
+      const out = new Set();
+      const box = document.createElement('div');
+      const add = html => { box.innerHTML = html; const t = spokenOf(box).text; if (t) out.add(t); };
+      Object.keys(SETS).forEach(set => SETS[set].forEach(it => {
+        add(stemHTML(it));
+        if (it.type === 'mc') it.choices.forEach(ch => add(linesSayHTML(ch.t)));
+        if (it.hint) add(reminderHTML(it));
+        const answers = it.type === 'mc'
+          ? it.choices.map((c, i) => [i === it.answer, i])
+          : [[true, it.key], ...(it.traps || []).map(t => [false, t.v]), [false, '1/999']];
+        answers.forEach(([ok, picked]) => add(feedbackHTML(it, ok, picked)));
+        if (it === SETS[set][0]) for (let n = 2; n <= SETS[set].length; n++) out.add(`${CHOOSE_SAY} ${resumeSay(set, n)}`);
+      }));
+      DIRECTIONS.forEach((d, i) => { box.innerHTML = dirStepHTML(d, i); markKeys(box); add(box.innerHTML); });
+      add(homeLeadHTML());
+      add(sayHTML(NO_LINK));
+      add(sayHTML(NAME_CHECK));
+      Object.values(NAME_HINTS).forEach(t => add(sayHTML(t)));
+      ['Directions.', DIR_DONE, CHOOSE_SAY].forEach(t => out.add(t));
+      return [...out];
+    }
+  };
+
+  window.addEventListener('pagehide', stopReading);
+  // Anything a lost connection left in this device's outbox goes now, or when the internet comes back
+  window.addEventListener('online', () => Sheet.flush());
+  renderHome();
+  Sheet.flush();
+})();
