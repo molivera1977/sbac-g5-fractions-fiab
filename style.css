@@ -578,4 +578,5 @@ body[data-screen="slides"] .container { max-width: 1320px; }
 .tpin-sample { margin-top: 18px; padding: 12px 16px; border: 2px dashed #fbbf24; border-radius: 12px; background: var(--wab); font-size: 0.85rem; max-width: 520px; }
 .tpin-sample p { margin: 0 0 10px; color: #78350f; }
 .t-sample { margin: 12px 0 0; padding: 8px 14px; border-radius: 10px; background: #fef3c7; color: #78350f; font-weight: 800; border: 2px dashed #f59e0b; font-size: 0.9rem; }
+.t-pin-note { margin: 8px 0 0; padding: 8px 14px; border-radius: 10px; background: #e0f2fe; color: #0c4a6e; font-weight: 700; border: 2px solid #7dd3fc; line-height: 1.4; font-size: 0.9rem; }
 @media (max-width: 700px) { #tpin { padding: 26px 16px; } }
