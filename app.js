@@ -882,6 +882,11 @@
   let tPin = null;      // her PIN, in memory only, while Class Scores is open
   let tTeacher = '';    // whose class is showing
   let tSample = false;  // preview: the sample data, not a real class
+  // her own class with no work yet (asked 11/25: "Until her 1st score"): the sample class with its bar, until her
+  // students' first saved answer comes in on an update; then her real class, and the sample is gone
+  let tWaiting = false;
+  const SAMPLE_NOTE = $('#t-sample').textContent;
+  const WAIT_NOTE = "Sample data · Your class has no scores yet, so these are made-up students to show you what this page will look like. They disappear as soon as your students' scores start showing up.";
   let classList = [];
   let heatSet = 'W';
   let heatDone = [];    // the students on the heat map now (the take shown), with what they picked, for the box
@@ -1381,6 +1386,13 @@
   function drawClass(rows, keep) {
     const body = $('#t-body');
     classList = groupStudents(rows);
+    tWaiting = !tSample && !classList.length;
+    const shown = tWaiting ? cleanRows(sampleRows()) : rows;
+    if (tWaiting) classList = groupStudents(shown);
+    if (!tSample) {   // the guest / preview sample keeps its own bar and words
+      $('#t-sample').hidden = !tWaiting;
+      $('#t-sample').textContent = tWaiting ? WAIT_NOTE : SAMPLE_NOTE;
+    }
     fillFix();
     if (!tSample) stampUpdated();
     if (!classList.length) {
@@ -1389,7 +1401,7 @@
     }
     if (!keep) liveOpen = null;   // ↻ Refresh or a new visit starts closed; the 20-second update (keep) keeps the open box
     if (!keep) skOpen = null;     // the skill map's box too, like the heat map's
-    body.innerHTML = classHTML(rows, classList);
+    body.innerHTML = classHTML(shown, classList);
     drawLive();
     // stay on the set she was looking at; otherwise the first set anyone has finished
     const hasFinished = s => classList.some(st => st.sets[s] && st.sets[s].takes.length);
@@ -1415,7 +1427,7 @@
       if (names.includes(keep)) sel.value = keep;
       sel.dataset.names = list;
     }
-    $('#t-fix').hidden = tSample || !names.length;
+    $('#t-fix').hidden = tSample || tWaiting || !names.length;
   }
   const FIX_ERRORS = {
     'Unknown action': "Your score sheet can't fix names yet. It needs an update first. Nothing was changed.",
